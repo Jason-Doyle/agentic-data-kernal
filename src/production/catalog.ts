@@ -22,6 +22,7 @@ export function productionCatalog(
       "advance_workflow",
       "request_effect",
       "add_lineage",
+      "explain",
       "seed_inventory",
       "reserve_inventory",
       "request_payment",

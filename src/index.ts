@@ -11,4 +11,11 @@ export type {
   IntentExecutionResult,
 } from "./ir.js";
 export { SqliteStore } from "./store.js";
+export {
+  formatTraceExplanation,
+  normalizeTraceDepth,
+  parseTraceEndpoint,
+  summarizeTraceJson,
+  traceEndpointKey,
+} from "./explain.js";
 export type * from "./types.js";

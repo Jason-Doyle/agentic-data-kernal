@@ -5,6 +5,11 @@ import {
   createApiKey,
   revokeApiKey,
 } from "./auth.js";
+import {
+  formatTraceExplanation,
+  normalizeTraceDepth,
+  parseTraceEndpoint,
+} from "../explain.js";
 import { reconcileArtifactFiles } from "./artifact-reconciliation.js";
 import {
   configuredEmbeddingSpace,
@@ -191,6 +196,36 @@ async function main(): Promise<void> {
       process.once("SIGTERM", () => void close());
       return;
     }
+    case "explain": {
+      const config = loadProductionConfig();
+      const runtime = createProductionRuntime(config);
+      try {
+        await assertRuntimeReady(runtime.database, config);
+        const principal = await authenticateToken(
+          runtime.database,
+          config,
+          requiredEnvironment("AGENTIC_DATA_API_KEY", 1),
+          requiredEnvironment("AGENTIC_DATA_PURPOSE", 1),
+        );
+        const explanation = await runtime.kernel.explainReadOnly(
+          principal,
+          parseTraceEndpoint(
+            requiredOption(args, "--type"),
+            requiredOption(args, "--id"),
+            option(args, "--revision"),
+          ),
+          normalizeTraceDepth(Number(option(args, "--depth") ?? "4")),
+        );
+        if (args.includes("--json")) {
+          print(explanation);
+        } else {
+          console.log(formatTraceExplanation(explanation));
+        }
+      } finally {
+        await runtime.database.close();
+      }
+      return;
+    }
     case "load": {
       const result = await runLoad({
         baseUrl: option(args, "--url") ?? "https://localhost:8443",
@@ -300,6 +335,7 @@ Commands:
   worker [--once]
   reconcile-artifacts [--minimum-age-ms N]
   mcp
+  explain --type TYPE --id ID [--revision N] [--depth N] [--json]
   load --tenant ID --principal ID [--url URL] [--token TOKEN]
        [--purpose PURPOSE] [--requests N] [--concurrency N]
 `;

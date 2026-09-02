@@ -3,7 +3,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import type { AgenticKernel } from "./kernel.js";
-import { executeIntent, type AgentOperation } from "./ir.js";
+import {
+  executeIntent,
+  lineageEndpointSchema,
+  type AgentOperation,
+} from "./ir.js";
 
 const principalFields = {
   tenantId: z.string().trim().min(1),
@@ -118,6 +122,29 @@ export function createMcpServer(kernel: AgenticKernel): McpServer {
   );
 
   server.registerTool(
+    "explain_trace",
+    {
+      title: "Explain Durable Trace",
+      description:
+        "Traverse typed causal lineage around an artifact, assertion, workflow revision, or effect.",
+      inputSchema: {
+        ...principalFields,
+        target: lineageEndpointSchema,
+        maxDepth: z.number().int().min(0).max(8).optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) =>
+      toolResult(
+        kernel.explain(
+          args.tenantId,
+          args.target,
+          args.maxDepth,
+        ),
+      ),
+  );
+
+  server.registerTool(
     "reserve_inventory",
     {
       title: "Reserve Inventory",
@@ -166,7 +193,9 @@ export function createMcpServer(kernel: AgenticKernel): McpServer {
       annotations: { readOnlyHint: true },
     },
     async (args) =>
-      toolResult(kernel.getMachine(args.tenantId, args.instanceId)),
+      toolResult(
+        kernel.getMachineRecord(args.tenantId, args.instanceId),
+      ),
   );
 
   return server;

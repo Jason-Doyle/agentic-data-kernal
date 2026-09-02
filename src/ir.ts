@@ -69,7 +69,7 @@ const strengthSchema = z.discriminatedUnion("type", [
     .strict(),
 ]);
 
-const lineageEndpointSchema = z.discriminatedUnion("type", [
+export const lineageEndpointSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("artifact"),
@@ -250,6 +250,13 @@ export const agentOperationSchema = z.discriminatedUnion("op", [
       ]),
       from: lineageEndpointSchema,
       to: lineageEndpointSchema,
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("explain"),
+      target: lineageEndpointSchema,
+      maxDepth: z.number().int().min(0).max(8).optional(),
     })
     .strict(),
   z
@@ -455,6 +462,12 @@ function executeOperation(
       return kernel.requestEffect(principal, operation);
     case "add_lineage":
       return kernel.addLineage(principal, operation);
+    case "explain":
+      return kernel.explain(
+        principal.tenantId,
+        operation.target,
+        operation.maxDepth,
+      );
     case "record_effect_outcome":
       return kernel.recordEffectOutcome(principal, operation);
     case "seed_inventory":

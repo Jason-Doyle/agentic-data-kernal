@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
-import { agentOperationSchema } from "../ir.js";
+import {
+  agentOperationSchema,
+  lineageEndpointSchema,
+} from "../ir.js";
 import type { AuthenticatedPrincipal } from "./auth.js";
 import { productionCatalog } from "./catalog.js";
 import type { ProductionKernel } from "./kernel.js";
@@ -119,6 +122,28 @@ export function createProductionMcpServer(
         }),
       ),
   );
+  server.registerTool(
+    "explain_trace",
+    {
+      title: "Explain Durable Trace",
+      description:
+        "Traverse authenticated causal lineage around a durable record.",
+      inputSchema: {
+        target: lineageEndpointSchema,
+        maxDepth: z.number().int().min(0).max(8).optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ target, maxDepth }) =>
+      toolResult(
+        await kernel.explainReadOnly(
+          principal,
+          target,
+          maxDepth,
+        ),
+      ),
+  );
+
   server.registerTool(
     "get_machine",
     {

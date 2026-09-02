@@ -10,4 +10,7 @@ const result = await runSreScenario({
   runId: process.env.SRE_RUN_ID,
 });
 
-console.log(JSON.stringify(result, null, 2));
+const { explanation, ...summary } = result;
+console.log(JSON.stringify(summary, null, 2));
+console.log("");
+console.log(explanation);

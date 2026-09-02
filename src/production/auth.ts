@@ -188,6 +188,7 @@ export function operationScope(operation: string): string {
     case "search":
     case "get_machine":
     case "list_effects":
+    case "explain":
       return "data:read";
     case "put_entity":
     case "put_artifact":
