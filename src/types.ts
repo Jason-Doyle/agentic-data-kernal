@@ -276,6 +276,12 @@ export interface LineageEdgeRecord {
   createdAt: string;
 }
 
+export interface LineageInput {
+  relation: LineageRelation;
+  from: LineageEndpoint;
+  to: LineageEndpoint;
+}
+
 export interface TraceNode {
   ref: LineageEndpoint;
   depth: number;
@@ -375,13 +381,24 @@ export interface PaymentOutcomeInput {
   outcome?: JsonValue;
 }
 
+export interface OperationLayerCatalog {
+  knowledge: string[];
+  agency: string[];
+  retailCompatibility: string[];
+}
+
 export interface CatalogDescription {
   protocolVersion: "0.1";
   storage: string;
   operations: string[];
+  operationLayers?: OperationLayerCatalog;
   epistemicKinds: EpistemicKind[];
   strengthTypes: Strength["type"][];
   machineStates: MachineState[];
   guarantees: string[];
   limitations: string[];
+}
+
+export interface LayeredCatalogDescription extends CatalogDescription {
+  operationLayers: OperationLayerCatalog;
 }

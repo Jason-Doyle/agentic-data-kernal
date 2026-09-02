@@ -1,9 +1,13 @@
-import type { CatalogDescription } from "../types.js";
+import type { LayeredCatalogDescription } from "../types.js";
+import {
+  operationLayerCatalog,
+  PRODUCTION_OPERATION_NAMES,
+} from "../layers.js";
 import type { EmbeddingSpace } from "./embeddings.js";
 
 export function productionCatalog(
   embeddingSpace?: EmbeddingSpace,
-): CatalogDescription & {
+): LayeredCatalogDescription & {
   profile: "postgres-production";
   security: string[];
   embeddingSpace?: EmbeddingSpace;
@@ -12,24 +16,10 @@ export function productionCatalog(
     protocolVersion: "0.1",
     profile: "postgres-production",
     storage: "PostgreSQL 18 with pgvector and forced tenant row-level security",
-    operations: [
-      "put_entity",
-      "put_artifact",
-      "assert",
-      "resolve",
-      "search",
-      "create_workflow",
-      "advance_workflow",
-      "request_effect",
-      "add_lineage",
-      "explain",
-      "seed_inventory",
-      "reserve_inventory",
-      "request_payment",
-      "get_machine",
-      "list_effects",
-      "process_timers",
-    ],
+    operations: [...PRODUCTION_OPERATION_NAMES],
+    operationLayers: operationLayerCatalog(
+      PRODUCTION_OPERATION_NAMES,
+    ),
     epistemicKinds: [
       "observation",
       "reported_fact",

@@ -73,3 +73,25 @@ export {
   summarizeTraceJson,
   traceEndpointKey,
 } from "../explain.js";
+export {
+  AGENCY_OPERATION_NAMES,
+  DEVELOPMENT_OPERATION_NAMES,
+  KNOWLEDGE_OPERATION_NAMES,
+  isAgencyOperation,
+  isKnowledgeOperation,
+  isRetailCompatibilityOperation,
+  operationLayer,
+  operationLayerCatalog,
+  PRODUCTION_OPERATION_NAMES,
+  RETAIL_COMPATIBILITY_OPERATION_NAMES,
+} from "../layers.js";
+export type {
+  AgencyOperation,
+  AgencyOperationName,
+  AgentOperationName,
+  KnowledgeOperation,
+  KnowledgeOperationName,
+  OperationLayer,
+  RetailCompatibilityOperation,
+  RetailCompatibilityOperationName,
+} from "../layers.js";

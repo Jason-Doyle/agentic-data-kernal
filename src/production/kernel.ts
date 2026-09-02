@@ -13,6 +13,14 @@ import {
   traceEndpointKey,
 } from "../explain.js";
 import {
+  isAgencyOperation,
+  isKnowledgeOperation,
+  isRetailCompatibilityOperation,
+  type AgencyOperation,
+  type KnowledgeOperation,
+  type RetailCompatibilityOperation,
+} from "../layers.js";
+import {
   parseIntentEnvelope,
   type AgentOperation,
   type IntentExecutionResult,
@@ -584,6 +592,37 @@ export class ProductionKernel {
     preparedAssertion: PreparedAssertion | null,
     searchEmbedding: number[] | null,
   ): Promise<unknown> {
+    if (isKnowledgeOperation(operation)) {
+      return this.executeKnowledgeOperation(
+        client,
+        principal,
+        operation,
+        preparedArtifact,
+        preparedAssertion,
+        searchEmbedding,
+      );
+    }
+    if (isAgencyOperation(operation)) {
+      return this.executeAgencyOperation(client, principal, operation);
+    }
+    if (isRetailCompatibilityOperation(operation)) {
+      return this.executeRetailCompatibilityOperation(
+        client,
+        principal,
+        operation,
+      );
+    }
+    return assertNever(operation);
+  }
+
+  private async executeKnowledgeOperation(
+    client: PoolClient,
+    principal: AuthenticatedPrincipal,
+    operation: KnowledgeOperation,
+    preparedArtifact: PreparedArtifact | null,
+    preparedAssertion: PreparedAssertion | null,
+    searchEmbedding: number[] | null,
+  ): Promise<unknown> {
     switch (operation.op) {
       case "put_entity":
         return this.putEntity(client, principal, operation);
@@ -609,12 +648,6 @@ export class ProductionKernel {
           throw new Error("Search embedding was not prepared");
         }
         return this.search(client, operation, searchEmbedding);
-      case "create_workflow":
-        return this.createWorkflow(client, principal, operation);
-      case "advance_workflow":
-        return this.advanceWorkflow(client, principal, operation);
-      case "request_effect":
-        return this.requestEffect(client, principal, operation);
       case "add_lineage":
         return this.addLineage(client, principal, operation);
       case "explain":
@@ -624,11 +657,51 @@ export class ProductionKernel {
           operation.target,
           operation.maxDepth ?? 4,
         );
+      default:
+        return assertNever(operation);
+    }
+  }
+
+  private async executeAgencyOperation(
+    client: PoolClient,
+    principal: AuthenticatedPrincipal,
+    operation: AgencyOperation,
+  ): Promise<unknown> {
+    switch (operation.op) {
+      case "create_workflow":
+        return this.createWorkflow(client, principal, operation);
+      case "advance_workflow":
+        return this.advanceWorkflow(client, principal, operation);
+      case "request_effect":
+        return this.requestEffect(client, principal, operation);
       case "record_effect_outcome":
         throw new KernelError(
           "unauthorized",
           "Effect outcomes are accepted only from the effect worker",
         );
+      case "get_machine":
+        return this.getMachineRecord(
+          client,
+          principal.tenantId,
+          operation.instanceId,
+        );
+      case "list_effects":
+        return this.listEffects(
+          client,
+          principal.tenantId,
+          operation.instanceId,
+        );
+      default:
+        return assertNever(operation);
+    }
+  }
+
+  private async executeRetailCompatibilityOperation(
+    client: PoolClient,
+    principal: AuthenticatedPrincipal,
+    operation: RetailCompatibilityOperation,
+  ): Promise<unknown> {
+    switch (operation.op) {
       case "seed_inventory":
         return this.seedInventory(client, principal, operation);
       case "reserve_inventory":
@@ -637,14 +710,6 @@ export class ProductionKernel {
         return this.requestPayment(client, principal, operation);
       case "record_payment_outcome":
         return this.recordPaymentOutcome(client, principal, operation);
-      case "get_machine":
-        return this.getMachineRecord(
-          client,
-          principal.tenantId,
-          operation.instanceId,
-        );
-      case "list_effects":
-        return this.listEffects(client, principal.tenantId, operation.instanceId);
       case "process_timers":
         return this.processTimers(client, principal, operation.asOf);
       default:

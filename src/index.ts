@@ -10,6 +10,31 @@ export type {
   IntentEnvelope,
   IntentExecutionResult,
 } from "./ir.js";
+export {
+  AGENCY_OPERATION_NAMES,
+  AgencyLayer,
+  DEVELOPMENT_OPERATION_NAMES,
+  KNOWLEDGE_OPERATION_NAMES,
+  KnowledgeLayer,
+  isAgencyOperation,
+  isKnowledgeOperation,
+  isRetailCompatibilityOperation,
+  operationLayer,
+  operationLayerCatalog,
+  PRODUCTION_OPERATION_NAMES,
+  RETAIL_COMPATIBILITY_OPERATION_NAMES,
+  RetailCompatibilityAdapter,
+} from "./layers.js";
+export type {
+  AgencyOperation,
+  AgencyOperationName,
+  AgentOperationName,
+  KnowledgeOperation,
+  KnowledgeOperationName,
+  OperationLayer,
+  RetailCompatibilityOperation,
+  RetailCompatibilityOperationName,
+} from "./layers.js";
 export { SqliteStore } from "./store.js";
 export {
   formatTraceExplanation,

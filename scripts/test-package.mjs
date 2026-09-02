@@ -102,9 +102,11 @@ try {
     smokeModule,
     `import {
   AgenticKernel,
-  SqliteStore,
-  formatTraceExplanation,
-} from "agentic-data-kernel";
+      KNOWLEDGE_OPERATION_NAMES,
+      KnowledgeLayer,
+      SqliteStore,
+      formatTraceExplanation,
+    } from "agentic-data-kernel";
 import {
   OpenAiCompatibleEmbeddingProvider,
   postgresMigrationDirectory,
@@ -123,6 +125,12 @@ try {
   }
   if (typeof formatTraceExplanation !== "function") {
     throw new Error("Trace formatter export is unavailable");
+  }
+  if (
+    !(kernel.knowledge instanceof KnowledgeLayer) ||
+    !KNOWLEDGE_OPERATION_NAMES.includes("assert")
+  ) {
+    throw new Error("Layered API exports are unavailable");
   }
   if (
     !existsSync(join(postgresMigrationDirectory, "001_core.sql")) ||
@@ -146,9 +154,11 @@ try {
     typeSmokeModule,
     `import {
   AgenticKernel,
-  SqliteStore,
-  formatTraceExplanation,
-} from "agentic-data-kernel";
+      type KnowledgeOperationName,
+      KnowledgeLayer,
+      SqliteStore,
+      formatTraceExplanation,
+    } from "agentic-data-kernel";
 import {
   type EmbeddingSpace,
   ProductionDatabase,
@@ -157,6 +167,8 @@ import {
 
 const store = new SqliteStore(":memory:");
 const kernel: AgenticKernel = new AgenticKernel(store);
+const knowledgeLayer: KnowledgeLayer = kernel.knowledge;
+const knowledgeOperation: KnowledgeOperationName = "assert";
 const formatter: typeof formatTraceExplanation = formatTraceExplanation;
 const databaseType: typeof ProductionDatabase = ProductionDatabase;
 const migrationPath: string = postgresMigrationDirectory;
@@ -166,6 +178,8 @@ const embeddingSpace: EmbeddingSpace = {
   dimensions: 768,
 };
 void kernel;
+void knowledgeLayer;
+void knowledgeOperation;
 void formatter;
 void databaseType;
 void migrationPath;

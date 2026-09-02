@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added typed Knowledge and Agency operation layers to the embedded API and
+  operation catalogs.
+- Moved retail Agent Intent dispatch behind a compatibility adapter without
+  removing or renaming existing operations.
+
 ## 0.3.0-alpha.3
 
 - Added a reproducible SRE comparison between a competent conventional
