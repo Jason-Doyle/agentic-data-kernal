@@ -2,25 +2,25 @@
 
 Generated from `summary.json`.
 
-Source revision: `b11e26f47b7fab96b04d28a604658b2fcabb6d43`
+Source revision: `a735ca67a1393821d7640910b62e6363898be49f`
 
-Source hash: `7896ded0768493c0e9694b5df9f8da9bcda16a96d9a51f117ed2f1bdb39cd108`
+Source hash: `854b7bc11edab854f66313a0824ca92b82fb4523d7559d04e8a1ffe31f9f5952`
 
 ## Correctness
 
 Both variants must resolve every run with one delivery and one reconciliation.
 
-| Variant | Passed | Delivery counts | Reconciliation counts | Audit score |
-| --- | ---: | --- | --- | --- |
-| Conventional PostgreSQL | 3/3 | 1, 1, 1 | 1, 1, 1 | 9, 9, 9 / 9 |
-| Agentic Data Kernel | 3/3 | 1, 1, 1 | 1, 1, 1 | 9, 9, 9 / 9 |
+| Variant | Passed | Delivery counts | Reconciliation counts | Recovery | Audit score |
+| --- | ---: | --- | --- | --- | --- |
+| Conventional PostgreSQL | 3/3 | 1, 1, 1 | 1, 1, 1 | 0.42 -> 0.03, 0.42 -> 0.03, 0.42 -> 0.03 | 9, 9, 9 / 9 |
+| Agentic Data Kernel | 3/3 | 1, 1, 1 | 1, 1, 1 | 0.42 -> 0.03, 0.42 -> 0.03, 0.42 -> 0.03 | 9, 9, 9 / 9 |
 
 ## Application-owned surface
 
 | Variant | Nonblank app lines | App-authored tables | Operated tables |
 | --- | ---: | ---: | ---: |
-| Conventional PostgreSQL | 308 | 8 | 8 |
-| Agentic Data Kernel adapter | 40 | 0 | 18 |
+| Conventional PostgreSQL | 317 | 8 | 8 |
+| Agentic Data Kernel adapter | 43 | 0 | 18 |
 
 The adapter delegates to the shipped SRE scenario, which contains
 884 nonblank TypeScript source lines inside the
@@ -28,7 +28,7 @@ dependency. The full kernel dependency contains 13247
 nonblank TypeScript source lines.
 
 The benchmark runner and engine-specific audit verification contain
-1289 nonblank TypeScript source lines.
+1367 nonblank TypeScript source lines.
 They are excluded from both application columns. Dependency and harness code
 is not application-authored, but it remains code that must be understood,
 operated, or upgraded.
@@ -44,8 +44,8 @@ operated, or upgraded.
 
 | Variant | Median milliseconds |
 | --- | ---: |
-| Conventional PostgreSQL | 65.48 |
-| Agentic Data Kernel | 1002.14 |
+| Conventional PostgreSQL | 54.32 |
+| Agentic Data Kernel | 945.58 |
 
 Runtime is not a headline metric. The variants perform different work and this
 deterministic smoke benchmark is not a latency study.
