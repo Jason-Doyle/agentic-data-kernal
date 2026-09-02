@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0-alpha.1
+
 - Added generic durable workflows with optimistic revision and state guards.
 - Added FK-backed causal lineage across artifacts, assertions, workflow
   revisions, and effects.
