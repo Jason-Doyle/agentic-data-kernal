@@ -25,7 +25,7 @@ jobs:
           - 24
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -45,7 +45,7 @@ jobs:
       PRODUCTION_TEST_MIGRATION_DATABASE_URL: postgresql://postgres:ci-administrator-password@127.0.0.1:54329/agentic_data
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
