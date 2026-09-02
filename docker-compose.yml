@@ -1,0 +1,176 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_DB: agentic_data
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      APP_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?APP_DATABASE_PASSWORD is required}
+    ports:
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-54329}:5432"
+    volumes:
+      - agentic-postgres:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U postgres -d agentic_data
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  bootstrap:
+    image: pgvector/pgvector:pg18
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      APP_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?APP_DATABASE_PASSWORD is required}
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        export PGPASSWORD="$$POSTGRES_PASSWORD"
+        if ! psql \
+          --host postgres \
+          --username postgres \
+          --dbname agentic_data \
+          --tuples-only \
+          --no-align \
+          --command "SELECT 1 FROM pg_roles WHERE rolname = 'agentic_app'" |
+          grep -q 1; then
+          printf '%s\n' \
+            "CREATE ROLE agentic_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD :'app_password';" |
+          psql \
+            --host postgres \
+            --username postgres \
+            --dbname agentic_data \
+            --set=ON_ERROR_STOP=1 \
+            --set=app_password="$$APP_DATABASE_PASSWORD"
+        else
+          printf '%s\n' \
+            "ALTER ROLE agentic_app PASSWORD :'app_password';" |
+          psql \
+            --host postgres \
+            --username postgres \
+            --dbname agentic_data \
+            --set=ON_ERROR_STOP=1 \
+            --set=app_password="$$APP_DATABASE_PASSWORD"
+        fi
+
+  migrate:
+    profiles:
+      - server
+    build:
+      context: .
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/agentic_data
+    command:
+      - node
+      - dist/production/cli.js
+      - migrate
+
+  artifact-init:
+    profiles:
+      - server
+    image: alpine:3.22
+    volumes:
+      - ${ARTIFACT_DIR_HOST:-./.data/production-artifacts}:/artifacts
+    command:
+      - /bin/sh
+      - -ec
+      - mkdir -p /artifacts && chown -R 10001:10001 /artifacts && chmod 700 /artifacts
+
+  app:
+    profiles:
+      - server
+    build:
+      context: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      artifact-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://agentic_app:${APP_DATABASE_PASSWORD:?APP_DATABASE_PASSWORD is required}@postgres:5432/agentic_data
+      AUTH_PEPPER: ${AUTH_PEPPER:-}
+      ARTIFACT_KEYRING: ${ARTIFACT_KEYRING:-}
+      ARTIFACT_CURRENT_KEY_ID: ${ARTIFACT_CURRENT_KEY_ID:-v1}
+      ARTIFACT_DIR: /var/lib/agentic-data/artifacts
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EFFECT_ALLOWED_HOSTS: ${EFFECT_ALLOWED_HOSTS:-}
+      HOST: 0.0.0.0
+      PORT: 4318
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    expose:
+      - "4318"
+    volumes:
+      - ${ARTIFACT_DIR_HOST:-./.data/production-artifacts}:/var/lib/agentic-data/artifacts
+    command:
+      - node
+      - dist/production/cli.js
+      - serve
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:4318/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  worker:
+    profiles:
+      - server
+    build:
+      context: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      artifact-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://agentic_app:${APP_DATABASE_PASSWORD:?APP_DATABASE_PASSWORD is required}@postgres:5432/agentic_data
+      AUTH_PEPPER: ${AUTH_PEPPER:-}
+      ARTIFACT_KEYRING: ${ARTIFACT_KEYRING:-}
+      ARTIFACT_CURRENT_KEY_ID: ${ARTIFACT_CURRENT_KEY_ID:-v1}
+      ARTIFACT_DIR: /var/lib/agentic-data/artifacts
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EFFECT_ALLOWED_HOSTS: ${EFFECT_ALLOWED_HOSTS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ${ARTIFACT_DIR_HOST:-./.data/production-artifacts}:/var/lib/agentic-data/artifacts
+    command:
+      - node
+      - dist/production/cli.js
+      - worker
+
+  proxy:
+    profiles:
+      - server
+    image: caddy:2.10-alpine
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      SERVER_NAME: ${SERVER_NAME:-localhost}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - agentic-caddy-data:/data
+      - agentic-caddy-config:/config
+
+volumes:
+  agentic-postgres:
+  agentic-caddy-data:
+  agentic-caddy-config:

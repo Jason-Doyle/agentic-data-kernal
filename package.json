@@ -1,19 +1,44 @@
 {
   "name": "agentic-data-kernel",
-  "version": "0.1.0",
+  "version": "0.2.0-alpha.1",
   "description": "Local-first epistemic state and workflow kernel for AI agents",
   "type": "module",
   "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./production": {
+      "types": "./dist/production/index.d.ts",
+      "import": "./dist/production/index.js"
+    }
+  },
   "engines": {
     "node": ">=22.5.0"
   },
   "bin": {
-    "agentic-data": "dist/cli.js"
+    "agentic-data": "dist/cli.js",
+    "agentic-data-prod": "dist/production/cli.js"
   },
   "files": [
     "dist/*.js",
     "dist/*.js.map",
     "dist/*.d.ts",
+    "dist/production/*.js",
+    "dist/production/*.js.map",
+    "dist/production/*.d.ts",
+    "migrations",
+    "docs",
+    "scripts",
+    "docker",
+    "docker-compose.yml",
+    "Dockerfile",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    ".env.example",
     "README.md",
     "LICENSE"
   ],
@@ -23,14 +48,25 @@
     "test": "npm run build && node --no-warnings --test \"dist/test/*.test.js\"",
     "demo": "npm run build && node --no-warnings dist/cli.js demo --db .data/demo.db",
     "serve": "npm run build && node --no-warnings dist/cli.js serve --db .data/agentic.db",
-    "mcp": "npm run build && node --no-warnings dist/cli.js mcp --db .data/agentic.db"
+    "mcp": "npm run build && node --no-warnings dist/cli.js mcp --db .data/agentic.db",
+    "prod:migrate": "npm run build && node --env-file=.env dist/production/cli.js migrate",
+    "prod:status": "npm run build && node --env-file=.env dist/production/cli.js migration-status",
+    "prod:serve": "npm run build && node --env-file=.env dist/production/cli.js serve",
+    "prod:worker": "npm run build && node --env-file=.env dist/production/cli.js worker",
+    "prod:mcp": "npm run build && node --env-file=.env dist/production/cli.js mcp",
+    "prod:load": "npm run build && node --env-file=.env dist/production/cli.js load"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "pg": "^8.23.0",
+    "pgvector": "^0.3.0",
+    "pino": "^10.3.1",
+    "undici": "^8.10.1",
     "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
   }

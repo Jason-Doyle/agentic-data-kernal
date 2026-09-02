@@ -161,7 +161,7 @@ export const agentOperationSchema = z.discriminatedUnion("op", [
       op: z.literal("seed_inventory"),
       sku: nonEmptyString,
       location: nonEmptyString,
-      quantityOnHand: z.number().int().nonnegative(),
+      quantityOnHand: z.number().int().min(0).max(2_147_483_647),
     })
     .strict(),
   z
@@ -170,7 +170,7 @@ export const agentOperationSchema = z.discriminatedUnion("op", [
       orderId: nonEmptyString,
       sku: nonEmptyString,
       location: nonEmptyString,
-      quantity: z.number().int().positive(),
+      quantity: z.number().int().positive().max(2_147_483_647),
       holdSeconds: z.number().int().positive().max(86_400),
       idempotencyKey: nonEmptyString,
     })
@@ -179,9 +179,13 @@ export const agentOperationSchema = z.discriminatedUnion("op", [
     .object({
       op: z.literal("request_payment"),
       instanceId: nonEmptyString,
-      amount: z.number().positive(),
+      amount: z
+        .string()
+        .regex(/^(0|[1-9]\d{0,15})(\.\d{1,4})?$/)
+        .refine((value) => Number(value) > 0, "amount must be greater than zero"),
       currency: z.string().trim().regex(/^[A-Z]{3}$/),
       paymentTarget: nonEmptyString,
+      paymentStatusUrl: nonEmptyString.optional(),
       idempotencyKey: nonEmptyString,
     })
     .strict(),

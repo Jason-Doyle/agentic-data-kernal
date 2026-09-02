@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .data/
+.backups/
+.env
 *.db
 *.db-shm
 *.db-wal

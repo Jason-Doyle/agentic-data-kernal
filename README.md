@@ -1,7 +1,7 @@
 # Agentic Data Kernel
 
-An early local-first implementation of an epistemic state and workflow kernel
-for AI agents.
+An epistemic state and workflow kernel with a local development profile and an
+authenticated PostgreSQL production profile.
 
 The project combines:
 
@@ -14,17 +14,48 @@ The project combines:
 - a typed Agent Intent IR;
 - an MCP server, local HTTP API, and read-only SQL interface for people.
 
-This is a **local MVP**, not a production database. It deliberately uses
-Node.js embedded SQLite behind a replaceable storage boundary so the semantics
-can be tested before building the PostgreSQL adapter described in the research.
+Two profiles are included:
+
+- **Development:** embedded SQLite, loopback HTTP, local MCP, and human
+  read-only SQL.
+- **Production preview:** PostgreSQL 18, pgvector, forced tenant RLS,
+  authenticated scoped keys, encrypted artifacts, real embeddings, budgeted
+  effect dispatch, migrations, metrics, backup/restore, and load tooling.
 
 ## Requirements
 
 - Node.js 22.5 or newer
 - npm 10 or newer
+- Docker with Compose for the included PostgreSQL production environment
 
 Node's built-in `node:sqlite` API is experimental in Node 22. The CLI suppresses
 that runtime warning; the limitation remains.
+
+## Production profile
+
+See:
+
+- [docs/PRODUCTION.md](docs/PRODUCTION.md)
+- [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
+- [SECURITY.md](SECURITY.md)
+
+Minimal PostgreSQL setup:
+
+```powershell
+Copy-Item .env.example .env
+.\scripts\generate-secrets.ps1
+docker compose up -d postgres
+docker compose run --rm bootstrap
+npm run prod:migrate
+```
+
+After replacing every `.env` placeholder, run:
+
+```powershell
+docker compose --profile server up --build
+```
+
+The production API accepts only authenticated requests and has no SQL route.
 
 ## Run locally
 
@@ -92,10 +123,9 @@ Default address: `http://127.0.0.1:4318`
 | `GET /health` | Liveness |
 | `GET /v1/catalog` | Operations and guarantees |
 | `POST /v1/execute` | Execute one Agent Intent IR operation |
-| `POST /v1/sql` | Execute one read-only SQL query |
 
-The SQL route is a local administrative/debugging surface. The HTTP server has
-no production authentication and should remain bound to loopback.
+The development HTTP server is restricted to loopback and has no SQL route.
+Use the CLI for local administrative SQL.
 
 Example:
 
@@ -179,7 +209,7 @@ Version 0.1 intentionally permits one operation per envelope:
 
 Supported operations are available through the catalog endpoint and resource.
 
-## Current architecture
+## Development architecture
 
 ```text
 CLI / HTTP / MCP
@@ -210,28 +240,24 @@ Important semantics:
 - timers and effects have deterministic identities;
 - replay uses stable idempotency results.
 
-## Limitations
+## Development profile limitations
 
 - single-process local database;
 - caller-supplied local principal and tenant identity;
-- no production authorization or encrypted artifact store;
 - deterministic feature-hash vectors demonstrate query plumbing but are not a
   semantic embedding model;
-- no approximate vector index or projection epochs yet;
-- no external effect dispatcher or reconciliation adapter yet;
 - retail workflow is a narrow reference state machine;
-- SQLite is the local adapter, not the intended long-term transactional
-  substrate.
+- SQLite is a development adapter.
 
-## Next implementation milestones
+## Production profile boundaries
 
-1. PostgreSQL adapter with row-level security and tenant-inclusive keys.
-2. Projection epochs for snapshot-coherent text, vector, graph, and analytical
-   indexes.
-3. Delegation, approval, budget reservation, and dispatch-time authorization.
-4. External effect adapter with `unknown` outcome reconciliation.
-5. Agent IR operation DAGs and bounded context packages.
-6. Retail benchmark generator, deterministic oracle, and fault campaign.
+- TLS terminates at a trusted reverse proxy or service mesh.
+- The included rate limiter is process-local.
+- The included deployment uses one PostgreSQL primary.
+- The vector schema currently requires 1536-dimensional embeddings.
+- External receivers must honor idempotency keys.
+- Full projection epochs, operation DAGs, context-package optimization, and the
+  complete benchmark campaign remain research milestones.
 
 ## Research
 

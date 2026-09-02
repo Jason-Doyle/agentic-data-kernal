@@ -1,0 +1,19 @@
+{
+  "protocolVersion": "0.1",
+  "requestId": "payment-order-1001",
+  "idempotencyKey": "payment-order-1001",
+  "principal": {
+    "tenantId": "example",
+    "principalId": "checkout-agent",
+    "purpose": "checkout"
+  },
+  "operation": {
+    "op": "request_payment",
+    "instanceId": "order:1001",
+    "amount": "149.98",
+    "currency": "USD",
+    "paymentTarget": "https://payments.example.com/capture",
+    "paymentStatusUrl": "https://payments.example.com/status/payment-order-1001",
+    "idempotencyKey": "payment-order-1001"
+  }
+}

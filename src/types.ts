@@ -206,6 +206,8 @@ export interface MachineRecord {
 
 export type EffectStatus =
   | "planned"
+  | "dispatching"
+  | "reconciling"
   | "unknown"
   | "succeeded"
   | "failed"
@@ -259,9 +261,10 @@ export interface ReservationResult {
 
 export interface PaymentRequestInput {
   instanceId: string;
-  amount: number;
+  amount: string;
   currency: string;
   paymentTarget: string;
+  paymentStatusUrl?: string;
   idempotencyKey: string;
 }
 

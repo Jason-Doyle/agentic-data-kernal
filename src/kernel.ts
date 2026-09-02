@@ -695,7 +695,12 @@ export class AgenticKernel {
   ): InventoryRecord {
     requireNonEmpty(sku, "sku");
     requireNonEmpty(location, "location");
-    requirePositiveInteger(quantityOnHand, "quantityOnHand", true);
+    requirePositiveInteger(
+      quantityOnHand,
+      "quantityOnHand",
+      true,
+      2_147_483_647,
+    );
     const existing = this.store.get<InventoryDbRow>(
       `SELECT * FROM inventory
        WHERE tenant_id = ? AND sku = ? AND location = ?`,
@@ -756,8 +761,13 @@ export class AgenticKernel {
     input: ReserveInventoryInput,
   ): ReservationResult {
     return this.store.transaction(() => {
-      requirePositiveInteger(input.quantity, "quantity");
-      requirePositiveInteger(input.holdSeconds, "holdSeconds");
+      requirePositiveInteger(
+        input.quantity,
+        "quantity",
+        false,
+        2_147_483_647,
+      );
+      requirePositiveInteger(input.holdSeconds, "holdSeconds", false, 86_400);
       const operationKey = `reserve:${input.idempotencyKey}`;
       const requestHash = sha256(stableStringify(input));
       const prior = this.getIdempotency<ReservationResult>(
@@ -889,8 +899,11 @@ export class AgenticKernel {
     input: PaymentRequestInput,
   ): EffectRecord {
     return this.store.transaction(() => {
-      if (!Number.isFinite(input.amount) || input.amount <= 0) {
-        throw new KernelError("invalid_input", "amount must be greater than zero");
+      if (!isCanonicalDecimal(input.amount)) {
+        throw new KernelError(
+          "invalid_input",
+          "amount must be a positive decimal string with at most four decimal places",
+        );
       }
       const operationKey = `payment:${input.idempotencyKey}`;
       const requestHash = sha256(stableStringify(input));
@@ -1899,14 +1912,22 @@ function requirePositiveInteger(
   value: number,
   fieldName: string,
   allowZero = false,
+  maximum = Number.MAX_SAFE_INTEGER,
 ): void {
   const minimum = allowZero ? 0 : 1;
-  if (!Number.isInteger(value) || value < minimum) {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
     throw new KernelError(
       "invalid_input",
-      `${fieldName} must be an integer >= ${minimum}`,
+      `${fieldName} must be an integer between ${minimum} and ${maximum}`,
     );
   }
+}
+
+function isCanonicalDecimal(value: string): boolean {
+  return (
+    /^(0|[1-9]\d{0,15})(\.\d{1,4})?$/.test(value) &&
+    Number(value) > 0
+  );
 }
 
 function requireRowString(row: SqlRow, key: string): string {

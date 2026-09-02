@@ -37,7 +37,7 @@ test("retail order reserves, requests payment, and commits once", () => {
 
   const effect = kernel.requestPayment(principal, {
     instanceId: "order:order-1",
-    amount: 20,
+    amount: "20",
     currency: "USD",
     paymentTarget: "test-payments",
     idempotencyKey: "pay-order-1",
@@ -117,7 +117,7 @@ test("unknown payment callbacks are idempotent and can later reconcile", () => {
   });
   const effect = kernel.requestPayment(principal, {
     instanceId: "order:order-3",
-    amount: 10,
+    amount: "10",
     currency: "USD",
     paymentTarget: "test-payments",
     idempotencyKey: "pay-order-3",
@@ -170,7 +170,7 @@ test("payment cannot start after the reservation expires", () => {
     () =>
       kernel.requestPayment(principal, {
         instanceId: "order:order-4",
-        amount: 10,
+        amount: "10",
         currency: "USD",
         paymentTarget: "test-payments",
         idempotencyKey: "pay-order-4",

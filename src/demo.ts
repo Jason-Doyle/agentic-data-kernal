@@ -196,7 +196,7 @@ export function runDemo(kernel: AgenticKernel): JsonValue {
   const payment = run("payment-order-1001", {
     op: "request_payment",
     instanceId: "order:1001",
-    amount: 149.98,
+    amount: "149.98",
     currency: "USD",
     paymentTarget: "simulated-payments",
     idempotencyKey: "order-1001-payment",

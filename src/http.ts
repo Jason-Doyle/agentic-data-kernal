@@ -13,6 +13,12 @@ export async function startHttpServer(
 ): Promise<Server> {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 4318;
+  if (!isLoopback(host)) {
+    throw new KernelError(
+      "unauthorized",
+      "The local development server may bind only to loopback",
+    );
+  }
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", `http://${host}:${port}`);
@@ -29,22 +35,6 @@ export async function startHttpServer(
         sendJson(response, 200, executeIntent(kernel, body));
         return;
       }
-      if (request.method === "POST" && url.pathname === "/v1/sql") {
-        const body = await readJsonBody(request);
-        if (
-          body === null ||
-          typeof body !== "object" ||
-          !("query" in body) ||
-          typeof body.query !== "string"
-        ) {
-          throw new KernelError(
-            "invalid_input",
-            "Body must contain a string query",
-          );
-        }
-        sendJson(response, 200, { rows: kernel.readSql(body.query) });
-        return;
-      }
       sendJson(response, 404, {
         error: { code: "not_found", message: "Route not found" },
       });
@@ -57,6 +47,7 @@ export async function startHttpServer(
         },
       });
     }
+
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -67,6 +58,10 @@ export async function startHttpServer(
     });
   });
   return server;
+}
+
+function isLoopback(host: string): boolean {
+  return host === "127.0.0.1" || host === "::1" || host === "localhost";
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
