@@ -44,7 +44,7 @@ export {
 } from "./embedding-space.js";
 export type { EmbeddingSpaceStatus } from "./embedding-space.js";
 export { EffectWorker, SecureHttpEffectTransport } from "./effects.js";
-export type { EffectTransport } from "./effects.js";
+export type { EffectRunFilter, EffectTransport } from "./effects.js";
 export {
   assertMigrationsApplied,
   migratePostgres,
@@ -57,3 +57,8 @@ export { ProductionKernel } from "./kernel.js";
 export { createProductionMcpServer } from "./mcp.js";
 export { startProductionHttpServer } from "./http.js";
 export { createProductionRuntime } from "./runtime.js";
+export { runSreScenario } from "./sre-scenario.js";
+export type {
+  SreScenarioOptions,
+  SreScenarioResult,
+} from "./sre-scenario.js";

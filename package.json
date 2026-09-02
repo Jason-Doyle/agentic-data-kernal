@@ -89,6 +89,7 @@
     "example:mcp": "node --no-warnings dist/examples/mcp-client.js",
     "example:production-http": "node dist/examples/production-http.js",
     "example:production-retail": "node dist/examples/production-retail.js",
+    "example:sre": "node --env-file=.env dist/examples/sre-scenario.js",
     "example:embedding": "node dist/examples/embedding-provider.js",
     "example:mock-embeddings": "node dist/examples/mock-embedding-server.js",
     "example:mock-effects": "node dist/examples/mock-effect-receiver.js",

@@ -75,6 +75,11 @@ export interface EffectTransport {
   }): Promise<DeliveryResult>;
 }
 
+export interface EffectRunFilter {
+  tenantId?: string;
+  effectId?: string;
+}
+
 export class SecureHttpEffectTransport implements EffectTransport {
   public constructor(
     private readonly allowedHosts: Set<string>,
@@ -252,15 +257,20 @@ export class EffectWorker {
     private readonly logger: Logger,
   ) {}
 
-  public async runOnce(): Promise<boolean> {
-    const tenants = await this.database.query<{ tenant_id: string }>(
-      `SELECT tenant_id
-       FROM agentic_auth.tenants
-       WHERE active = TRUE
-       ORDER BY tenant_id`,
-    );
+  public async runOnce(filter: EffectRunFilter = {}): Promise<boolean> {
+    const tenants = filter.tenantId
+      ? { rows: [{ tenant_id: filter.tenantId }] }
+      : await this.database.query<{ tenant_id: string }>(
+          `SELECT tenant_id
+           FROM agentic_auth.tenants
+           WHERE active = TRUE
+           ORDER BY tenant_id`,
+        );
     for (const tenant of tenants.rows) {
-      const effect = await this.leaseNext(tenant.tenant_id);
+      const effect = await this.leaseNext(
+        tenant.tenant_id,
+        filter.effectId,
+      );
       if (!effect) {
         continue;
       }
@@ -303,7 +313,10 @@ export class EffectWorker {
     }
   }
 
-  private async leaseNext(tenantId: string): Promise<LeasedEffect | null> {
+  private async leaseNext(
+    tenantId: string,
+    effectId?: string,
+  ): Promise<LeasedEffect | null> {
     const context = workerContext(tenantId);
     return this.database.withTenantWriteTransaction(context, async (client) => {
       const result = await client.query<
@@ -325,6 +338,7 @@ export class EffectWorker {
            ON key.key_id = effect.authorizing_key_id
           AND key.tenant_id = effect.tenant_id
          WHERE effect.tenant_id = $1
+           AND ($2::TEXT IS NULL OR effect.effect_id = $2)
            AND effect.status IN (
              'planned',
              'unknown',
@@ -339,7 +353,7 @@ export class EffectWorker {
          ORDER BY effect.created_at
          FOR UPDATE OF effect, key SKIP LOCKED
          LIMIT 1`,
-        [tenantId],
+        [tenantId, effectId ?? null],
       );
       const candidate = result.rows[0];
       if (!candidate) {
