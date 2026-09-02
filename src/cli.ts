@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { runDemo } from "./demo.js";
+import { runExample } from "./example.js";
 import { startHttpServer } from "./http.js";
 import { AgenticKernel } from "./kernel.js";
 import { executeIntent } from "./ir.js";
@@ -28,8 +28,8 @@ async function main(): Promise<void> {
       case "catalog":
         print(kernel.catalog());
         break;
-      case "demo":
-        print(runDemo(kernel));
+      case "example":
+        print(runExample(kernel));
         break;
       case "execute": {
         const file = requiredOption(args, "--file");
@@ -118,7 +118,7 @@ const helpText = `Agentic Data Kernel
 
 Usage:
   agentic-data init [--db path]
-  agentic-data demo [--db path]
+  agentic-data example [--db path]
   agentic-data catalog [--db path]
   agentic-data execute --file intent.json [--db path]
   agentic-data sql --query "SELECT ..." [--db path]

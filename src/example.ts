@@ -8,19 +8,19 @@ import type { JsonValue, PrincipalContext } from "./types.js";
 import { toJsonValue } from "./util.js";
 
 const principal: PrincipalContext = {
-  tenantId: "retail-demo",
-  principalId: "demo-agent",
-  purpose: "local-proof-of-concept",
+  tenantId: "example-retail",
+  principalId: "sample-runner",
+  purpose: "local-example",
 };
 
-export function runDemo(kernel: AgenticKernel): JsonValue {
+export function runExample(kernel: AgenticKernel): JsonValue {
   const run = (
     key: string,
     operation: AgentOperation,
   ): IntentExecutionResult =>
     executeIntent(kernel, {
       protocolVersion: "0.1",
-      requestId: `demo-${key}`,
+      requestId: `example-${key}`,
       idempotencyKey: key,
       principal,
       operation,
@@ -121,7 +121,7 @@ export function runDemo(kernel: AgenticKernel): JsonValue {
         eventDefinition: "Cancellation within 30 days",
       },
       basis: {
-        model: "demo-intent-classifier-v1",
+        model: "sample-intent-classifier-v1",
         source: "support-conversation-921",
       },
     },
@@ -207,7 +207,7 @@ export function runDemo(kernel: AgenticKernel): JsonValue {
     effectId,
     idempotencyKey: "payment-outcome-order-1001",
     status: "succeeded",
-    outcome: { providerReference: "demo-payment-1001" },
+    outcome: { providerReference: "sample-payment-1001" },
   });
 
   return toJsonValue({
@@ -216,7 +216,7 @@ export function runDemo(kernel: AgenticKernel): JsonValue {
     reservation: reservation.result,
     paymentEffect: payment.result,
     completedOrder: completed.result,
-    inventory: kernel.getInventory("retail-demo", "sku-17", "store-3"),
+    inventory: kernel.getInventory("example-retail", "sku-17", "store-3"),
     replaySafe: run("reserve-order-1001", {
       op: "reserve_inventory",
       orderId: "1001",
@@ -236,7 +236,7 @@ function requireStringField(value: JsonValue, field: string): string {
     typeof value !== "object" ||
     typeof value[field] !== "string"
   ) {
-    throw new Error(`Expected ${field} in demo result`);
+    throw new Error(`Expected ${field} in sample result`);
   }
   return value[field];
 }

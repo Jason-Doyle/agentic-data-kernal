@@ -1,7 +1,7 @@
 {
   "name": "agentic-data-kernel",
   "version": "0.2.0-alpha.1",
-  "description": "Local-first epistemic state and workflow kernel for AI agents",
+  "description": "Temporal knowledge and durable workflow infrastructure for software agents",
   "type": "module",
   "license": "Apache-2.0",
   "main": "dist/index.js",
@@ -43,10 +43,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --no-warnings --test \"dist/test/*.test.js\"",
-    "demo": "npm run build && node --no-warnings dist/cli.js demo --db .data/demo.db",
+    "example": "npm run build && node --no-warnings dist/cli.js example --db .data/example.db",
     "serve": "npm run build && node --no-warnings dist/cli.js serve --db .data/agentic.db",
     "mcp": "npm run build && node --no-warnings dist/cli.js mcp --db .data/agentic.db",
     "prod:migrate": "npm run build && node --env-file=.env dist/production/cli.js migrate",

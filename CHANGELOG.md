@@ -19,4 +19,4 @@
 
 - Added the embedded SQLite development kernel.
 - Added bitemporal assertions, conflict resolution, hybrid retrieval, durable
-  retail order state, local HTTP, MCP, CLI, and research documents.
+  retail order state, local HTTP, MCP, CLI, and project documentation.

@@ -1,97 +1,102 @@
 # Agentic Data Kernel
 
-An epistemic state and workflow kernel with a local development profile and an
-authenticated PostgreSQL production profile.
+Open source data infrastructure for long-running software agents.
 
-The project combines:
+Agentic Data Kernel keeps knowledge, workflow state, and external effects in a
+single governed system. It is designed for applications that need to answer:
 
-- bitemporal assertions with evidence, epistemic kind, perspective, and typed
-  uncertainty;
-- explicit `known`, `unknown`, and `conflicted` resolution results;
-- hybrid lexical/vector retrieval with bounded graph traversal;
-- transactional retail inventory and durable order state;
-- deterministic timers, effect intents, idempotency, and execution receipts;
-- a typed Agent Intent IR;
-- an MCP server, local HTTP API, and read-only SQL interface for people.
+- What is currently known?
+- When was it valid?
+- Where did it come from?
+- What conflicts with it?
+- Which workflow or external action depended on it?
 
-Two profiles are included:
+## Capabilities
 
-- **Development:** embedded SQLite, loopback HTTP, local MCP, and human
-  read-only SQL.
-- **Production preview:** PostgreSQL 18, pgvector, forced tenant RLS,
-  authenticated scoped keys, encrypted artifacts, real embeddings, budgeted
-  effect dispatch, migrations, metrics, backup/restore, and load tooling.
+- Bitemporal assertions with evidence, epistemic kind, perspective, and typed
+  uncertainty
+- Explicit `known`, `unknown`, and `conflicted` resolution results
+- Hybrid lexical, vector, relational, graph, and temporal retrieval
+- Durable workflow state, timers, idempotency, and execution receipts
+- Transactional inventory reservations and payment effect intents
+- Scoped API keys, purpose binding, and PostgreSQL row-level security
+- Encrypted immutable artifact storage with key rotation
+- Authorized effect delivery with budgets, retries, and status reconciliation
+- HTTP, MCP, TypeScript, CLI, and read-only local SQL interfaces
 
-## Requirements
+## Use cases
+
+| Use case | What the kernel provides |
+| --- | --- |
+| Catalog and master-data reconciliation | Source-backed claims, conflicting values, temporal correction, and reviewable resolution |
+| Persistent agent memory | Distinct observations, facts, inferences, decisions, and experiences with provenance |
+| Retail order workflows | Inventory holds, expiry timers, payment effects, idempotent retries, and durable order state |
+| Customer support operations | Tenant-scoped context retrieval, current-state checks, and evidence-linked decisions |
+| Incident response | Temporal observations, hypotheses, workflow history, and controlled remediation effects |
+| Controlled payment automation | Purpose-scoped credentials, effect budgets, authorization fences, and audit receipts |
+
+See [docs/USE_CASES.md](docs/USE_CASES.md) for detailed flows and current
+support.
+
+## Project status
+
+The current release is `0.2.0-alpha.1`.
+
+Two runtime profiles are maintained:
+
+- **Development profile:** embedded SQLite, loopback HTTP, local MCP, and
+  read-only SQL for inspection.
+- **PostgreSQL profile:** PostgreSQL 18, pgvector, forced tenant isolation,
+  authenticated APIs, encrypted artifacts, provider embeddings, effect
+  workers, TLS, migrations, metrics, backup, restore, and load tooling.
+
+The PostgreSQL profile targets bounded single-primary deployments. See
+[docs/PRODUCTION.md](docs/PRODUCTION.md) before exposing it outside a trusted
+environment.
+
+## Quick start
+
+Requirements:
 
 - Node.js 22.5 or newer
 - npm 10 or newer
-- Docker with Compose for the included PostgreSQL production environment
-
-Node's built-in `node:sqlite` API is experimental in Node 22. The CLI suppresses
-that runtime warning; the limitation remains.
-
-## Production profile
-
-See:
-
-- [docs/PRODUCTION.md](docs/PRODUCTION.md)
-- [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
-- [SECURITY.md](SECURITY.md)
-
-Minimal PostgreSQL setup:
-
-```powershell
-Copy-Item .env.example .env
-.\scripts\generate-secrets.ps1
-docker compose up -d postgres
-docker compose run --rm bootstrap
-npm run prod:migrate
-```
-
-After replacing every `.env` placeholder, run:
-
-```powershell
-docker compose --profile server up --build
-```
-
-The production API accepts only authenticated requests and has no SQL route.
-
-## Run locally
 
 ```powershell
 npm install
 npm test
-npm run demo
+npm run example
 ```
 
-The demo:
+The sample workflow:
 
 1. stores conflicting supplier claims about a product;
-2. returns an explicit conflict instead of overwriting either claim;
-3. performs hybrid retrieval across a small customer/product/incident graph;
+2. preserves both claims and returns an explicit conflict;
+3. searches across a customer, product, and incident graph;
 4. reserves inventory transactionally;
 5. creates a durable payment effect;
-6. records the payment outcome;
+6. records the provider outcome;
 7. confirms the order without duplicating inventory changes on replay.
 
-The demo database is written to `.data\demo.db`.
+The sample database is written to `.data\example.db`.
 
-## CLI
+Node's built-in `node:sqlite` API is experimental in Node 22. This affects only
+the development profile.
 
-Build once:
+## Development CLI
+
+Build:
 
 ```powershell
 npm run build
 ```
 
-Initialize a local database:
+Initialize a database:
 
 ```powershell
 node --no-warnings dist\cli.js init --db .data\agentic.db
 ```
 
-Execute an Agent Intent:
+Execute an operation:
 
 ```powershell
 node --no-warnings dist\cli.js execute `
@@ -99,7 +104,7 @@ node --no-warnings dist\cli.js execute `
   --file examples\put-product.json
 ```
 
-Run a read-only human SQL query:
+Inspect state with read-only SQL:
 
 ```powershell
 node --no-warnings dist\cli.js sql `
@@ -107,10 +112,9 @@ node --no-warnings dist\cli.js sql `
   --query "SELECT assertion_id, predicate, status FROM assertions"
 ```
 
-Only `SELECT`, `EXPLAIN`, and schema-inspection PRAGMAs are accepted by
-the SQL surface.
+The SQL interface accepts `SELECT`, `EXPLAIN`, and schema-inspection PRAGMAs.
 
-## Local HTTP API
+## Development HTTP
 
 ```powershell
 npm run serve
@@ -121,32 +125,20 @@ Default address: `http://127.0.0.1:4318`
 | Route | Purpose |
 | --- | --- |
 | `GET /health` | Liveness |
-| `GET /v1/catalog` | Operations and guarantees |
-| `POST /v1/execute` | Execute one Agent Intent IR operation |
+| `GET /v1/catalog` | Supported operations and guarantees |
+| `POST /v1/execute` | Execute one Agent Intent operation |
 
-The development HTTP server is restricted to loopback and has no SQL route.
-Use the CLI for local administrative SQL.
-
-Example:
-
-```powershell
-$intent = Get-Content examples\put-product.json -Raw
-Invoke-RestMethod `
-  -Method Post `
-  -Uri http://127.0.0.1:4318/v1/execute `
-  -ContentType application/json `
-  -Body $intent
-```
+The development server is loopback-only and has no network SQL route.
 
 ## MCP
 
-Start the stdio server:
+Start the development MCP server:
 
 ```powershell
 npm run mcp
 ```
 
-The server publishes `agentic-data://catalog` and these tools:
+It publishes `agentic-data://catalog` and these tools:
 
 - `execute_intent`
 - `search_knowledge`
@@ -154,28 +146,37 @@ The server publishes `agentic-data://catalog` and these tools:
 - `reserve_inventory`
 - `get_machine`
 
-The three convenience read tools do not write audit receipts. Use
-`execute_intent` when an otherwise read-only operation must produce a durable
-receipt.
+Use `npm run prod:mcp` for an authenticated PostgreSQL-backed MCP process.
 
-Generic local MCP configuration:
+## PostgreSQL deployment
 
-```json
-{
-  "command": "node",
-  "args": [
-    "--no-warnings",
-    "D:\\Sites\\Mine\\AgenticData\\dist\\cli.js",
-    "mcp",
-    "--db",
-    "D:\\Sites\\Mine\\AgenticData\\.data\\agentic.db"
-  ]
-}
+Requirements:
+
+- Docker with Compose
+- An OpenAI-compatible 1536-dimensional embedding endpoint
+- Generated database, authentication, and artifact-encryption secrets
+
+```powershell
+Copy-Item .env.example .env
+.\scripts\generate-secrets.ps1
+docker compose --profile server up --build
 ```
 
-## Agent Intent IR v0.1
+The included deployment:
 
-Version 0.1 intentionally permits one operation per envelope:
+- creates a non-superuser runtime database role;
+- applies checksum-verified migrations separately;
+- initializes artifact-directory ownership;
+- runs the API and effect worker independently;
+- publishes only the Caddy TLS endpoint;
+- keeps PostgreSQL bound to loopback by default.
+
+Full setup and operating procedures are in
+[docs/PRODUCTION.md](docs/PRODUCTION.md).
+
+## Agent Intent
+
+Version 0.1 executes one typed operation per envelope:
 
 ```json
 {
@@ -183,7 +184,7 @@ Version 0.1 intentionally permits one operation per envelope:
   "requestId": "claim-1",
   "idempotencyKey": "claim-1",
   "principal": {
-    "tenantId": "retail-demo",
+    "tenantId": "example-retail",
     "principalId": "catalog-agent",
     "purpose": "catalog-ingestion"
   },
@@ -207,62 +208,47 @@ Version 0.1 intentionally permits one operation per envelope:
 }
 ```
 
-Supported operations are available through the catalog endpoint and resource.
+The production server derives authority from the authenticated API key and
+rejects envelopes whose tenant, principal, or purpose does not match.
 
-## Development architecture
+## Architecture
 
 ```text
-CLI / HTTP / MCP
-        |
-Agent Intent validation
-        |
-Agentic kernel
-  | assertions + evidence
-  | conflict resolution
-  | hybrid retrieval
-  | retail state machine
-  | timers + effects + receipts
-        |
-replaceable storage boundary
-        |
-embedded SQLite
+HTTP / MCP / TypeScript / CLI
+             |
+     Agent Intent validation
+             |
+   identity, scope, purpose
+             |
+ knowledge + workflow kernel
+   | assertions and evidence
+   | conflict resolution
+   | hybrid retrieval
+   | timers and state machines
+   | effects and receipts
+             |
+ SQLite development adapter
+             or
+ PostgreSQL + pgvector + RLS
 ```
 
-Important semantics:
+## Documentation
 
-- assertions are append-oriented and carry valid time plus system time;
-- supersession closes the old assertion's system-time interval;
-- observations, reported facts, inferences, predictions, decisions, and
-  directives are distinct kinds;
-- similarity scores remain separate from truth-strength fields;
-- graph and hash-vector search generate candidates, not authority;
-- inventory changes and state transitions commit in one transaction;
-- timers and effects have deterministic identities;
-- replay uses stable idempotency results.
+- [Use cases](docs/USE_CASES.md)
+- [Production profile](docs/PRODUCTION.md)
+- [Threat model](docs/THREAT_MODEL.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
 
-## Development profile limitations
+## Boundaries
 
-- single-process local database;
-- caller-supplied local principal and tenant identity;
-- deterministic feature-hash vectors demonstrate query plumbing but are not a
-  semantic embedding model;
-- retail workflow is a narrow reference state machine;
-- SQLite is a development adapter.
-
-## Production profile boundaries
-
-- TLS terminates at a trusted reverse proxy or service mesh.
-- The included rate limiter is process-local.
 - The included deployment uses one PostgreSQL primary.
+- The default rate limiter is process-local.
 - The vector schema currently requires 1536-dimensional embeddings.
-- External receivers must honor idempotency keys.
-- Full projection epochs, operation DAGs, context-package optimization, and the
-  complete benchmark campaign remain research milestones.
-
-## Research
-
-- [AGENT_FIRST_DATABASE_RESEARCH.md](AGENT_FIRST_DATABASE_RESEARCH.md)
-- [PROOF_OF_CONCEPT_BLUEPRINT.md](PROOF_OF_CONCEPT_BLUEPRINT.md)
+- Effect receivers must honor idempotency keys.
+- Projection epochs, multi-operation plans, and context-package optimization
+  are not yet implemented.
 
 ## License
 

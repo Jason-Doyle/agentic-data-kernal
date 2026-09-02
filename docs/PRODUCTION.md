@@ -248,8 +248,8 @@ npm run prod:load -- `
 ```
 
 The harness reports success count, requests per second, and p50, p95, and p99
-latency. It is a smoke tool, not a substitute for the benchmark program in
-`PROOF_OF_CONCEPT_BLUEPRINT.md`.
+latency. It is a smoke tool, not a substitute for sustained workload, fault,
+and recovery testing.
 
 ## Operational checklist
 
