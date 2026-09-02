@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - 22
+          - 24
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npm test
+      - run: npm pack --dry-run
+
+  postgres:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-administrator-password
+      APP_DATABASE_PASSWORD: ci-application-password
+      PRODUCTION_TEST_DATABASE_URL: postgresql://agentic_app:ci-application-password@127.0.0.1:54329/agentic_data
+      PRODUCTION_TEST_MIGRATION_DATABASE_URL: postgresql://postgres:ci-administrator-password@127.0.0.1:54329/agentic_data
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: docker compose up -d postgres
+      - run: docker compose run --rm bootstrap
+      - run: npm run build
+      - name: Apply migrations
+        env:
+          DATABASE_URL: postgresql://postgres:ci-administrator-password@127.0.0.1:54329/agentic_data
+        run: node dist/production/cli.js migrate
+      - run: npm test
+      - name: Show container logs
+        if: failure()
+        run: docker compose logs postgres
+      - name: Stop containers
+        if: always()
+        run: docker compose down -v

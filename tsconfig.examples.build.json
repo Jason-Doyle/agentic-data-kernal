@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.examples.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist/examples",
+    "rootDir": "examples/integrations",
+    "declaration": false,
+    "sourceMap": true
+  }
+}

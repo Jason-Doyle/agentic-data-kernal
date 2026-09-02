@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible defect
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report vulnerabilities here. Use private vulnerability reporting.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: 0.2.0-alpha.1
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Runtime profile
+      options:
+        - SQLite development profile
+        - PostgreSQL profile
+        - MCP
+        - HTTP
+        - Docker Compose
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include the smallest safe example and relevant commands.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Node.js, PostgreSQL, and deployment details.
+    validations:
+      required: true

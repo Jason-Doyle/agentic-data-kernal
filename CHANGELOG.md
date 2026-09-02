@@ -14,6 +14,12 @@
 - Added coordinated backup and restore with maintenance locking and checksums.
 - Added metrics, structured logs, a TLS Caddy edge, load tooling, and
   production integration tests.
+- Added runnable library, MCP, HTTP, embedding, effect receiver, and retail
+  integration examples.
+- Added API, integration, use case, support, contribution, and community
+  documentation.
+- Added Node and PostgreSQL CI, CodeQL analysis, and dependency update
+  configuration.
 
 ## 0.1.0
 

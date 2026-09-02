@@ -1,5 +1,9 @@
 # Agentic Data Kernel
 
+[![CI](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/ci.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/codeql.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/codeql.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 Open source data infrastructure for long-running software agents.
 
 Agentic Data Kernel keeps knowledge, workflow state, and external effects in a
@@ -63,6 +67,7 @@ Requirements:
 
 ```powershell
 npm install
+npm run build
 npm test
 npm run example
 ```
@@ -147,6 +152,21 @@ It publishes `agentic-data://catalog` and these tools:
 - `get_machine`
 
 Use `npm run prod:mcp` for an authenticated PostgreSQL-backed MCP process.
+
+## Integration examples
+
+| Example | Command |
+| --- | --- |
+| TypeScript library | `npm run example:library` |
+| MCP client | `npm run example:mcp` |
+| Authenticated production HTTP | `npm run example:production-http` |
+| Production retail workflow | `npm run example:production-retail` |
+| Embedding provider | `npm run example:embedding` |
+| Embedding protocol helper | `npm run example:mock-embeddings` |
+| Effect receiver contract | `npm run example:mock-effects` |
+
+Setup, environment variables, and receiver contracts are documented in
+[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
 ## PostgreSQL deployment
 
@@ -235,10 +255,14 @@ HTTP / MCP / TypeScript / CLI
 ## Documentation
 
 - [Use cases](docs/USE_CASES.md)
+- [Integration guide](docs/INTEGRATIONS.md)
+- [API reference](docs/API.md)
 - [Production profile](docs/PRODUCTION.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
+- [Support](SUPPORT.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
 - [Changelog](CHANGELOG.md)
 
 ## Boundaries

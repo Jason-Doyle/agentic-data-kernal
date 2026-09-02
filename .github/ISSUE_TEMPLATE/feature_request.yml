@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose a focused capability or integration
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: Describe the workflow and why existing operations are insufficient.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Correctness and safety requirements
+      description: Identify transaction, retry, authorization, or provenance requirements.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
