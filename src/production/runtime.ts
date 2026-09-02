@@ -25,6 +25,7 @@ export function createProductionRuntime(config: ProductionConfig): {
     config.embeddingModel,
     config.embeddingDimensions,
     config.embeddingTimeoutMs,
+    config.embeddingVersion,
   );
   const metrics = new MetricsRegistry();
   const logger = createLogger(config);

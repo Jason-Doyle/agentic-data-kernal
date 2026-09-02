@@ -28,7 +28,11 @@ export function createProductionMcpServer(
         {
           uri: uri.href,
           mimeType: "application/json",
-          text: JSON.stringify(productionCatalog(), null, 2),
+          text: JSON.stringify(
+            productionCatalog(kernel.embeddingSpace()),
+            null,
+            2,
+          ),
         },
       ],
     }),

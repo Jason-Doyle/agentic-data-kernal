@@ -1,8 +1,12 @@
 import type { CatalogDescription } from "../types.js";
+import type { EmbeddingSpace } from "./embeddings.js";
 
-export function productionCatalog(): CatalogDescription & {
+export function productionCatalog(
+  embeddingSpace?: EmbeddingSpace,
+): CatalogDescription & {
   profile: "postgres-production";
   security: string[];
+  embeddingSpace?: EmbeddingSpace;
 } {
   return {
     protocolVersion: "0.1",
@@ -52,6 +56,8 @@ export function productionCatalog(): CatalogDescription & {
       "checksum-verified forward migrations",
       "encrypted immutable artifact storage",
       "real provider embeddings with no silent fallback",
+      "database-enforced embedding model, version, and dimensions",
+      "bounded indexed candidates before hybrid reranking",
       "transactional inventory and durable workflow state",
       "effect budgets and dispatch authorization fences",
       "idempotent effect delivery and unknown-outcome reconciliation",
@@ -64,9 +70,11 @@ export function productionCatalog(): CatalogDescription & {
     ],
     limitations: [
       "single PostgreSQL primary",
-      "1536-dimensional embedding schema",
+      "one active embedding space per deployment",
+      "indexed vector dimensions are limited to 2000",
       "one operation per Agent IR v0.1 envelope",
       "TLS termination is expected at a trusted reverse proxy",
     ],
+    ...(embeddingSpace ? { embeddingSpace } : {}),
   };
 }

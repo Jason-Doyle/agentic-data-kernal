@@ -1,4 +1,11 @@
 import * as z from "zod/v4";
+import {
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_EMBEDDING_VERSION,
+  MAX_INDEXED_VECTOR_DIMENSIONS,
+  type EmbeddingSpace,
+} from "./embeddings.js";
 
 const baseSchema = z.object({
   DATABASE_URL: z.string().url(),
@@ -19,14 +26,41 @@ const serverSchema = baseSchema.extend({
   ARTIFACT_DIR: z.string().trim().min(1).default(".data/artifacts"),
   EMBEDDING_BASE_URL: z.string().url(),
   EMBEDDING_API_KEY: z.string().min(1),
-  EMBEDDING_MODEL: z.string().trim().min(1).default("text-embedding-3-small"),
-  EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(1536),
+  EMBEDDING_MODEL: z
+    .string()
+    .trim()
+    .min(1)
+    .default(DEFAULT_EMBEDDING_MODEL),
+  EMBEDDING_VERSION: z
+    .string()
+    .trim()
+    .min(1)
+    .default(DEFAULT_EMBEDDING_VERSION),
+  EMBEDDING_DIMENSIONS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_INDEXED_VECTOR_DIMENSIONS)
+    .default(DEFAULT_EMBEDDING_DIMENSIONS),
   EMBEDDING_TIMEOUT_MS: z.coerce
     .number()
     .int()
     .min(1_000)
     .max(120_000)
     .default(30_000),
+  SEARCH_CANDIDATE_LIMIT: z.coerce
+    .number()
+    .int()
+    .min(20)
+    .max(5_000)
+    .default(200),
+  HNSW_EF_SEARCH: z.coerce.number().int().min(1).max(1_000).default(100),
+  HNSW_MAX_SCAN_TUPLES: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(1_000_000)
+    .default(20_000),
   EFFECT_ALLOWED_HOSTS: z.string().default(""),
   EFFECT_TIMEOUT_MS: z.coerce
     .number()
@@ -79,8 +113,12 @@ export interface ProductionConfig extends DatabaseConfig {
   embeddingBaseUrl: string;
   embeddingApiKey: string;
   embeddingModel: string;
+  embeddingVersion: string;
   embeddingDimensions: number;
   embeddingTimeoutMs: number;
+  searchCandidateLimit: number;
+  hnswEfSearch: number;
+  hnswMaxScanTuples: number;
   effectAllowedHosts: Set<string>;
   effectTimeoutMs: number;
   effectLeaseSeconds: number;
@@ -121,15 +159,28 @@ export function loadMigrationDatabaseConfig(
   });
 }
 
+export function loadEmbeddingSpaceConfig(
+  environment: NodeJS.ProcessEnv = process.env,
+): EmbeddingSpace {
+  const parsed = parse(
+    z.object({
+      EMBEDDING_MODEL: serverSchema.shape.EMBEDDING_MODEL,
+      EMBEDDING_VERSION: serverSchema.shape.EMBEDDING_VERSION,
+      EMBEDDING_DIMENSIONS: serverSchema.shape.EMBEDDING_DIMENSIONS,
+    }),
+    environment,
+  );
+  return {
+    model: parsed.EMBEDDING_MODEL,
+    version: parsed.EMBEDDING_VERSION,
+    dimensions: parsed.EMBEDDING_DIMENSIONS,
+  };
+}
+
 export function loadProductionConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): ProductionConfig {
   const parsed = parse(serverSchema, environment);
-  if (parsed.EMBEDDING_DIMENSIONS !== 1536) {
-    throw new Error(
-      "EMBEDDING_DIMENSIONS must be 1536 for the current PostgreSQL schema",
-    );
-  }
 
   const artifactKeyring = parseArtifactKeyring(
     parsed.ARTIFACT_KEYRING,
@@ -152,8 +203,12 @@ export function loadProductionConfig(
     embeddingBaseUrl: parsed.EMBEDDING_BASE_URL,
     embeddingApiKey: parsed.EMBEDDING_API_KEY,
     embeddingModel: parsed.EMBEDDING_MODEL,
+    embeddingVersion: parsed.EMBEDDING_VERSION,
     embeddingDimensions: parsed.EMBEDDING_DIMENSIONS,
     embeddingTimeoutMs: parsed.EMBEDDING_TIMEOUT_MS,
+    searchCandidateLimit: parsed.SEARCH_CANDIDATE_LIMIT,
+    hnswEfSearch: parsed.HNSW_EF_SEARCH,
+    hnswMaxScanTuples: parsed.HNSW_MAX_SCAN_TUPLES,
     effectAllowedHosts,
     effectTimeoutMs: parsed.EFFECT_TIMEOUT_MS,
     effectLeaseSeconds: parsed.EFFECT_LEASE_SECONDS,
@@ -163,6 +218,19 @@ export function loadProductionConfig(
     logLevel: parsed.LOG_LEVEL,
     maxBodyBytes: parsed.MAX_BODY_BYTES,
     rateLimitPerMinute: parsed.RATE_LIMIT_PER_MINUTE,
+  };
+}
+
+export function configuredEmbeddingSpace(
+  config: Pick<
+    ProductionConfig,
+    "embeddingModel" | "embeddingVersion" | "embeddingDimensions"
+  >,
+): EmbeddingSpace {
+  return {
+    model: config.embeddingModel,
+    version: config.embeddingVersion,
+    dimensions: config.embeddingDimensions,
   };
 }
 

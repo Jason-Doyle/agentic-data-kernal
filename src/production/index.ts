@@ -12,7 +12,9 @@ export type {
   CreateApiKeyInput,
 } from "./auth.js";
 export {
+  configuredEmbeddingSpace,
   loadDatabaseConfig,
+  loadEmbeddingSpaceConfig,
   loadMigrationDatabaseConfig,
   loadProductionConfig,
 } from "./config.js";
@@ -24,7 +26,23 @@ export type {
 export { ProductionDatabase } from "./database.js";
 export type { TenantContext } from "./database.js";
 export { OpenAiCompatibleEmbeddingProvider } from "./embeddings.js";
-export type { EmbeddingProvider } from "./embeddings.js";
+export {
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_EMBEDDING_VERSION,
+  MAX_INDEXED_VECTOR_DIMENSIONS,
+  embeddingSpace,
+  validateEmbeddingSpace,
+  validateEmbeddingVector,
+} from "./embeddings.js";
+export type { EmbeddingProvider, EmbeddingSpace } from "./embeddings.js";
+export {
+  assertEmbeddingSpaceConfigured,
+  configureEmbeddingSpace,
+  embeddingIndexName,
+  embeddingSpaceStatus,
+} from "./embedding-space.js";
+export type { EmbeddingSpaceStatus } from "./embedding-space.js";
 export { EffectWorker, SecureHttpEffectTransport } from "./effects.js";
 export type { EffectTransport } from "./effects.js";
 export {
