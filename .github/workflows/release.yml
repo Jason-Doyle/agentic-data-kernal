@@ -89,7 +89,7 @@ jobs:
 
   container:
     name: Publish production container
-    needs: package
+    needs: npm
     runs-on: ubuntu-latest
     permissions:
       contents: read
