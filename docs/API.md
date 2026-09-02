@@ -10,8 +10,8 @@
 | CLI | PostgreSQL | `agentic-data-prod` |
 | HTTP | Development | `POST /v1/execute` |
 | HTTP | PostgreSQL | `POST /v1/execute` |
-| MCP | Development | `npm run mcp` |
-| MCP | PostgreSQL | `npm run prod:mcp` |
+| MCP | Development | `agentic-data-kernel mcp` |
+| MCP | PostgreSQL | `agentic-data-prod mcp` |
 
 ## Intent envelope
 

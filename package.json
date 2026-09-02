@@ -23,7 +23,9 @@
   },
   "homepage": "https://github.com/Jason-Doyle/agentic-data-kernal#readme",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true,
+    "registry": "https://registry.npmjs.org/"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -38,10 +40,13 @@
     }
   },
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.19.0",
+    "npm": ">=10.0.0"
   },
+  "packageManager": "npm@12.0.2",
   "bin": {
     "agentic-data": "dist/cli.js",
+    "agentic-data-kernel": "dist/cli.js",
     "agentic-data-prod": "dist/production/cli.js"
   },
   "files": [
@@ -55,7 +60,9 @@
     "dist/examples/*.js.map",
     "migrations",
     "docs",
-    "scripts",
+    "scripts/backup.ps1",
+    "scripts/generate-secrets.ps1",
+    "scripts/restore.ps1",
     "examples",
     "docker",
     "docker-compose.yml",
@@ -71,8 +78,11 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.json && tsc -p tsconfig.examples.build.json",
+    "prepack": "npm run build",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --no-warnings --test \"dist/test/*.test.js\"",
+    "test:package": "node scripts/test-package.mjs",
+    "release:check": "npm run check && npm test && npm run test:package",
     "example": "node --no-warnings dist/cli.js example --db .data/example.db",
     "example:all": "npm run example && npm run example:library && npm run example:mcp",
     "example:library": "node --no-warnings dist/examples/local-library.js",
@@ -93,6 +103,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@types/node": "^22.19.0",
+    "@types/pg": "^8.23.1",
     "pg": "^8.23.0",
     "pgvector": "^0.3.0",
     "pino": "^10.3.1",
@@ -100,8 +112,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@types/node": "^24.10.1",
-    "@types/pg": "^8.23.1",
+    "semver": "^7.8.5",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
   }

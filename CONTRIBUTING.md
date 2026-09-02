@@ -42,3 +42,9 @@ Keep changes focused and include:
 Use current behavior and direct language. Clearly label extension points and
 planned capabilities. Keep README examples short and move detailed integration
 steps into `docs`.
+
+## Releases
+
+Releases are built from version tags after the corresponding pull request has
+merged to `main`. See [docs/RELEASING.md](docs/RELEASING.md) for the version,
+package, container, and registry process.

@@ -11,6 +11,11 @@ import { SqliteStore } from "./store.js";
 
 async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
+  if (command === "help" || command === "--help" || command === "-h") {
+    console.log(helpText);
+    return;
+  }
+
   const dbPath = option(args, "--db") ?? ".data/agentic.db";
   const store = new SqliteStore(dbPath);
   const kernel = new AgenticKernel(store);
@@ -53,11 +58,6 @@ async function main(): Promise<void> {
         await waitForShutdown(server, store);
         return;
       }
-      case "help":
-      case "--help":
-      case "-h":
-        console.log(helpText);
-        break;
       default:
         throw new Error(`Unknown command: ${command}`);
     }

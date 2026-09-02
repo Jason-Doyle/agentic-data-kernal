@@ -22,6 +22,8 @@
   operational costs, alternatives, and poor-fit scenarios.
 - Added Node and PostgreSQL CI, CodeQL analysis, and dependency update
   configuration.
+- Added npm, GHCR, and GitHub release artifacts with package and container
+  smoke tests.
 
 ## 0.1.0
 

@@ -29,13 +29,22 @@ import { startProductionHttpServer } from "../production/http.js";
 import { ProductionKernel } from "../production/kernel.js";
 import { createLogger } from "../production/logger.js";
 import { MetricsRegistry } from "../production/metrics.js";
-import { migratePostgres } from "../production/migrations.js";
+import {
+  migratePostgres,
+  postgresMigrationDirectory,
+} from "../production/migrations.js";
 import { createProductionMcpServer } from "../production/mcp.js";
 import { EncryptedArtifactStore } from "../production/artifacts.js";
 
 const databaseUrl = process.env.PRODUCTION_TEST_DATABASE_URL;
 const migrationDatabaseUrl =
   process.env.PRODUCTION_TEST_MIGRATION_DATABASE_URL;
+
+test("packaged migrations resolve relative to the module", () => {
+  assert.ok(
+    readdirSync(postgresMigrationDirectory).includes("001_core.sql"),
+  );
+});
 
 test(
   "PostgreSQL profile enforces identity, RLS, encryption, and effect authority",

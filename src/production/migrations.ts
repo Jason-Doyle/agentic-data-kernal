@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { PoolClient } from "pg";
 import type { DatabaseConfig } from "./config.js";
 import { ProductionDatabase } from "./database.js";
@@ -10,9 +11,13 @@ interface AppliedMigration {
   checksum: string;
 }
 
+export const postgresMigrationDirectory = fileURLToPath(
+  new URL("../../migrations/postgres", import.meta.url),
+);
+
 export async function migratePostgres(
   config: DatabaseConfig,
-  directory = join(process.cwd(), "migrations", "postgres"),
+  directory = postgresMigrationDirectory,
 ): Promise<string[]> {
   const database = new ProductionDatabase(config);
   try {

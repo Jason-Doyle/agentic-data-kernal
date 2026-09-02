@@ -62,6 +62,7 @@ services:
   migrate:
     profiles:
       - server
+    image: ${AGENTIC_DATA_IMAGE:-agentic-data-kernel:local}
     build:
       context: .
     depends_on:
@@ -88,6 +89,7 @@ services:
   app:
     profiles:
       - server
+    image: ${AGENTIC_DATA_IMAGE:-agentic-data-kernel:local}
     build:
       context: .
     depends_on:
@@ -129,6 +131,7 @@ services:
   worker:
     profiles:
       - server
+    image: ${AGENTIC_DATA_IMAGE:-agentic-data-kernel:local}
     build:
       context: .
     depends_on:
