@@ -21,6 +21,7 @@ Pin an exact version in applications and production deployments.
 | MCP client | `examples/integrations/mcp-client.ts` | `npm run example:mcp` |
 | Authenticated production HTTP | `examples/integrations/production-http.ts` | `npm run example:production-http` |
 | Production retail workflow | `examples/integrations/production-retail.ts` | `npm run example:production-retail` |
+| Flagship SRE scenario | `examples/integrations/sre-scenario.ts` | `npm run example:sre` |
 | Embedding provider | `examples/integrations/embedding-provider.ts` | `npm run example:embedding` |
 | Embedding protocol helper | `examples/integrations/mock-embedding-server.ts` | `npm run example:mock-embeddings` |
 | Effect receiver contract | `examples/integrations/mock-effect-receiver.ts` | `npm run example:mock-effects` |
@@ -289,6 +290,22 @@ effects:write
 
 Its approved purpose must match `AGENTIC_DATA_PURPOSE`, and its effect budget
 must cover `149.98` in `USD`.
+
+## Flagship SRE scenario
+
+The SRE scenario runs directly against the production PostgreSQL profile with
+deterministic telemetry, embeddings, and remediation adapters:
+
+```powershell
+npm run example:sre
+```
+
+It creates a dedicated tenant, preserves contradictory hypotheses, selects a
+remediation, simulates an applied rollback with a timed-out response, restarts
+the runtime, reconciles provider state, and stores verification. Full setup and
+expected output are in [SRE_SCENARIO.md](SRE_SCENARIO.md). Run it against a
+dedicated empty database because it uses an explicitly synthetic embedding
+space.
 
 ## Custom effect transports
 

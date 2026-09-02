@@ -54,6 +54,25 @@ single governed system. It is designed for applications that need to answer:
 See [docs/USE_CASES.md](docs/USE_CASES.md) for detailed flows and current
 support.
 
+## Flagship SRE scenario
+
+The production-profile SRE scenario runs:
+
+```text
+alert -> evidence -> competing hypotheses -> decision -> authorized rollback
+      -> unknown outcome -> restart -> reconciliation -> verification
+```
+
+It applies the synthetic rollback once, survives two runtime restarts, and
+finishes only after monitoring verifies recovery.
+
+```powershell
+npm run example:sre
+```
+
+See [docs/SRE_SCENARIO.md](docs/SRE_SCENARIO.md) for setup, expected output,
+and demonstrated invariants.
+
 ## Project status
 
 The current release is `0.2.0-alpha.2`.
@@ -209,6 +228,7 @@ Use `npm run prod:mcp` for an authenticated PostgreSQL-backed MCP process.
 | MCP client | `npm run example:mcp` |
 | Authenticated production HTTP | `npm run example:production-http` |
 | Production retail workflow | `npm run example:production-retail` |
+| Flagship SRE scenario | `npm run example:sre` |
 | Embedding provider | `npm run example:embedding` |
 | Embedding protocol helper | `npm run example:mock-embeddings` |
 | Effect receiver contract | `npm run example:mock-effects` |
@@ -321,6 +341,7 @@ HTTP / MCP / TypeScript / CLI
 - [Integration guide](docs/INTEGRATIONS.md)
 - [API reference](docs/API.md)
 - [Production profile](docs/PRODUCTION.md)
+- [Flagship SRE scenario](docs/SRE_SCENARIO.md)
 - [Release process](docs/RELEASING.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Security policy](SECURITY.md)

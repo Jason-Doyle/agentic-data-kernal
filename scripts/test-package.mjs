@@ -37,6 +37,7 @@ try {
     "dist/index.d.ts",
     "dist/production/index.js",
     "dist/production/index.d.ts",
+    "dist/examples/sre-scenario.js",
     "migrations/postgres/001_core.sql",
     "migrations/postgres/002_embedding_space.sql",
     "migrations/postgres/003_generic_agency.sql",
