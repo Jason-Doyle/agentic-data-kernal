@@ -73,7 +73,7 @@ if (process.env.BENCHMARK_WRITE_RESULTS === "1") {
   );
 }
 if (process.argv.includes("--verify-results")) {
-  verifyPublishedResults();
+  verifyPublishedResults(summary);
 }
 
 async function runVariant(
@@ -82,11 +82,11 @@ async function runVariant(
 ): Promise<BenchmarkMeasurement> {
   const suffix = `${variant === "agentic-data-kernel" ? "adk" : "pg"}_${Date.now()}_${repetition}`;
   const databaseName = `agentic_bench_${suffix}`;
-  await control.query(`CREATE DATABASE ${databaseName}`);
   const adminUrl = databaseUrlFor(adminBase, databaseName);
   const appUrl = databaseUrlFor(appBase, databaseName);
   const artifactDirectory = join(workspace, databaseName);
   mkdirSync(artifactDirectory, { recursive: true });
+  await control.query(`CREATE DATABASE ${databaseName}`);
   try {
     const remediation = new SyntheticRemediationTransport();
     const outcome =
@@ -105,9 +105,9 @@ async function runVariant(
             runId: `${repetition}`,
             remediation,
           });
-    assertCorrectness(outcome);
+    assertCorrectness(outcome, String(repetition));
     const metrics = await databaseMetrics(adminUrl);
-    return { outcome, ...metrics };
+    return { repetition, outcome, ...metrics };
   } finally {
     await control.query(
       `DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`,
@@ -263,10 +263,15 @@ function passSummary(
   return {
     passed: values.length,
     attempted,
+    runIds: values.map((value) => value.outcome.runId),
     deliveryCounts: values.map((value) => value.outcome.deliveryCount),
     reconciliationCounts: values.map(
       (value) => value.outcome.reconciliationCount,
     ),
+    recoveryRates: values.map((value) => ({
+      before: value.outcome.errorRateBefore,
+      after: value.outcome.errorRateAfter,
+    })),
     explanationScores: values.map(
       (value) =>
         Object.values(value.outcome.auditAnswers).filter(Boolean).length,
@@ -289,10 +294,10 @@ Source hash: \`${summary.environment.sourceHash}\`
 
 Both variants must resolve every run with one delivery and one reconciliation.
 
-| Variant | Passed | Delivery counts | Reconciliation counts | Audit score |
-| --- | ---: | --- | --- | --- |
-| Conventional PostgreSQL | ${summary.correctness.conventionalPostgres.passed}/${summary.repetitions} | ${summary.correctness.conventionalPostgres.deliveryCounts.join(", ")} | ${summary.correctness.conventionalPostgres.reconciliationCounts.join(", ")} | ${summary.correctness.conventionalPostgres.explanationScores.join(", ")} / ${summary.explanationQuestions} |
-| Agentic Data Kernel | ${summary.correctness.agenticDataKernel.passed}/${summary.repetitions} | ${summary.correctness.agenticDataKernel.deliveryCounts.join(", ")} | ${summary.correctness.agenticDataKernel.reconciliationCounts.join(", ")} | ${summary.correctness.agenticDataKernel.explanationScores.join(", ")} / ${summary.explanationQuestions} |
+| Variant | Passed | Delivery counts | Reconciliation counts | Recovery | Audit score |
+| --- | ---: | --- | --- | --- | --- |
+| Conventional PostgreSQL | ${summary.correctness.conventionalPostgres.passed}/${summary.repetitions} | ${summary.correctness.conventionalPostgres.deliveryCounts.join(", ")} | ${summary.correctness.conventionalPostgres.reconciliationCounts.join(", ")} | ${formatRecovery(summary.correctness.conventionalPostgres.recoveryRates)} | ${summary.correctness.conventionalPostgres.explanationScores.join(", ")} / ${summary.explanationQuestions} |
+| Agentic Data Kernel | ${summary.correctness.agenticDataKernel.passed}/${summary.repetitions} | ${summary.correctness.agenticDataKernel.deliveryCounts.join(", ")} | ${summary.correctness.agenticDataKernel.reconciliationCounts.join(", ")} | ${formatRecovery(summary.correctness.agenticDataKernel.recoveryRates)} | ${summary.correctness.agenticDataKernel.explanationScores.join(", ")} / ${summary.explanationQuestions} |
 
 ## Application-owned surface
 
@@ -341,7 +346,9 @@ deterministic smoke benchmark is not a latency study.
 `;
 }
 
-function verifyPublishedResults(): void {
+function verifyPublishedResults(
+  live: ReturnType<typeof createSummary>,
+): void {
   const resultsDirectory = resolve("benchmarks", "sre", "results");
   const summaryPath = join(resultsDirectory, "summary.json");
   const reportPath = join(resultsDirectory, "report.md");
@@ -360,15 +367,18 @@ function verifyPublishedResults(): void {
     (value) => value.outcome.variant === "agentic-data-kernel",
   );
   if (
-    baseline.length !== publishedRepetitions ||
-    kernel.length !== publishedRepetitions
+    !hasExpectedRepetitions(baseline) ||
+    !hasExpectedRepetitions(kernel)
   ) {
     throw new Error(
-      "Published SRE benchmark evidence must contain three runs per variant",
+      "Published SRE benchmark evidence must contain unique repetitions per variant",
     );
   }
   for (const measurement of published.runs) {
-    assertCorrectness(measurement.outcome);
+    assertCorrectness(
+      measurement.outcome,
+      String(measurement.repetition),
+    );
   }
   const expectedHash = benchmarkSourceHash();
   if (published.environment.sourceHash !== expectedHash) {
@@ -387,6 +397,14 @@ function verifyPublishedResults(): void {
       "Published SRE benchmark aggregates do not match the raw runs",
     );
   }
+  if (
+    JSON.stringify(deterministicEvidence(published)) !==
+    JSON.stringify(deterministicEvidence(live))
+  ) {
+    throw new Error(
+      "Published SRE benchmark evidence does not match the live comparison",
+    );
+  }
   const expectedReport = normalizeLineEndings(renderReport(published));
   const actualReport = normalizeLineEndings(
     readFileSync(reportPath, "utf8"),
@@ -396,6 +414,49 @@ function verifyPublishedResults(): void {
       "Published SRE benchmark report does not match summary.json",
     );
   }
+}
+
+function hasExpectedRepetitions(
+  values: BenchmarkMeasurement[],
+): boolean {
+  const actual = values
+    .map((value) => value.repetition)
+    .sort((left, right) => left - right);
+  return (
+    actual.length === publishedRepetitions &&
+    actual.every((value, index) => value === index + 1)
+  );
+}
+
+function deterministicEvidence(
+  summary: ReturnType<typeof createSummary>,
+) {
+  return {
+    repetitions: summary.repetitions,
+    runs: summary.runs.map((measurement) => {
+      const { durationMs: _durationMs, ...outcome } = measurement.outcome;
+      return {
+        repetition: measurement.repetition,
+        outcome,
+        operatedTables: measurement.operatedTables,
+        databaseBytes: measurement.databaseBytes,
+      };
+    }),
+    correctness: summary.correctness,
+    applicationSurface: summary.applicationSurface,
+    benchmarkHarness: summary.benchmarkHarness,
+    databaseBytes: summary.databaseBytes,
+    explanationQuestions: summary.explanationQuestions,
+    claims: summary.claims,
+  };
+}
+
+function formatRecovery(
+  values: Array<{ before: number; after: number }>,
+): string {
+  return values
+    .map((value) => `${value.before} -> ${value.after}`)
+    .join(", ");
 }
 
 function parsePublishedSummary(
@@ -424,6 +485,9 @@ function isBenchmarkMeasurement(
 ): value is BenchmarkMeasurement {
   if (
     !isRecord(value) ||
+    typeof value.repetition !== "number" ||
+    !Number.isInteger(value.repetition) ||
+    value.repetition < 1 ||
     typeof value.operatedTables !== "number" ||
     !Number.isInteger(value.operatedTables) ||
     value.operatedTables < 0 ||
@@ -444,6 +508,7 @@ function isBenchmarkMeasurement(
       outcome.variant === "conventional-postgres" ||
       outcome.variant === "agentic-data-kernel"
     ) &&
+    typeof outcome.runId === "string" &&
     typeof outcome.finalState === "string" &&
     typeof outcome.effectStatus === "string" &&
     typeof outcome.deliveryCount === "number" &&
@@ -452,6 +517,10 @@ function isBenchmarkMeasurement(
     Number.isInteger(outcome.reconciliationCount) &&
     typeof outcome.runtimeReloads === "number" &&
     Number.isInteger(outcome.runtimeReloads) &&
+    typeof outcome.errorRateBefore === "number" &&
+    Number.isFinite(outcome.errorRateBefore) &&
+    typeof outcome.errorRateAfter === "number" &&
+    Number.isFinite(outcome.errorRateAfter) &&
     typeof outcome.durationMs === "number" &&
     Number.isFinite(outcome.durationMs) &&
     outcome.durationMs >= 0 &&

@@ -19,6 +19,7 @@ export async function runConventionalBaseline(options: {
   const idempotencyKey = `rollback-api-v42-${options.runId}`;
   const request = { service: "checkout-api", deployment: "api-v42" };
   const requestHash = hash(JSON.stringify(request));
+  const errorRateBefore = options.remediation.errorRate;
 
   const first = new Client({ connectionString: options.databaseUrl });
   await first.connect();
@@ -170,6 +171,10 @@ export async function runConventionalBaseline(options: {
       idempotencyKey,
       statusUrl: "https://deployments.example.com/status/rollback",
     });
+    const errorRateAfter = options.remediation.errorRate;
+    if (!Number.isFinite(errorRateAfter) || errorRateAfter > 0.05) {
+      throw new Error("Baseline remediation did not restore the error rate");
+    }
     await third.query("BEGIN");
     await third.query(
       `INSERT INTO effect_attempts VALUES (
@@ -189,9 +194,9 @@ export async function runConventionalBaseline(options: {
     );
     await third.query(
       `INSERT INTO verifications VALUES (
-         'verification:recovery', $1, $2, 0.03
+         'verification:recovery', $1, $2, $3
        )`,
-      [incidentId, effectId],
+      [incidentId, effectId, errorRateAfter],
     );
     await third.query(
       `INSERT INTO lineage VALUES (
@@ -209,7 +214,7 @@ export async function runConventionalBaseline(options: {
         JSON.stringify({
           effectId,
           verificationId: "verification:recovery",
-          errorRate: 0.03,
+          errorRate: errorRateAfter,
         }),
       ],
     );
@@ -221,6 +226,7 @@ export async function runConventionalBaseline(options: {
       requestHash,
       authorizationFence: `fence:${options.runId}`,
       providerReference: options.remediation.providerReference,
+      recoveredErrorRate: errorRateAfter,
     });
     const state = await third.query<{ state: string; status: string }>(
       `SELECT incident.state, effect.status
@@ -231,11 +237,14 @@ export async function runConventionalBaseline(options: {
     );
     return {
       variant: "conventional-postgres",
+      runId: options.runId,
       finalState: state.rows[0]?.state ?? "missing",
       effectStatus: state.rows[0]?.status ?? "missing",
       deliveryCount: options.remediation.deliveryCount,
       reconciliationCount: options.remediation.reconciliationCount,
       runtimeReloads: 2,
+      errorRateBefore,
+      errorRateAfter,
       auditAnswers: audit,
       durationMs: performance.now() - started,
     };
@@ -253,6 +262,7 @@ async function auditBaseline(
     requestHash: string;
     authorizationFence: string;
     providerReference: string;
+    recoveredErrorRate: number;
   },
 ): Promise<Record<string, boolean>> {
   const audit = await client.query<{
@@ -465,7 +475,7 @@ async function auditBaseline(
            WHERE verification_id = 'verification:recovery'
              AND incident_id = $1
              AND effect_id = $2
-             AND error_rate = 0.03
+             AND error_rate = $7
          )
          AND EXISTS (
            SELECT 1
@@ -486,7 +496,7 @@ async function auditBaseline(
              AND data = jsonb_build_object(
                'effectId', $2::TEXT,
                'verificationId', 'verification:recovery',
-               'errorRate', 0.03
+               'errorRate', $7::DOUBLE PRECISION
              )
          )
        ) AS verification_and_terminal_state`,
@@ -497,6 +507,7 @@ async function auditBaseline(
       expected.requestHash,
       expected.authorizationFence,
       expected.providerReference,
+      expected.recoveredErrorRate,
     ],
   );
   const value = audit.rows[0];

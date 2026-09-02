@@ -39,7 +39,8 @@ migrations, lockfile, and PostgreSQL container configuration.
 
 CI runs the comparison and verifies that the committed report is generated
 from `summary.json`, contains three correct runs per variant, has aggregates
-that match the raw runs, and has a current evidence source hash.
+that match the raw runs, has a current evidence source hash, and matches a
+fresh three-run comparison for deterministic outcomes and structural metrics.
 
 ## Metrics
 

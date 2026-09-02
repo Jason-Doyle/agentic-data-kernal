@@ -30,11 +30,14 @@ export async function runKernelVariant(options: {
   }
   return {
     variant: "agentic-data-kernel",
+    runId: result.runId,
     finalState: result.finalState,
     effectStatus: result.effectStatus,
     deliveryCount: result.deliveryCount,
     reconciliationCount: result.reconciliationCount,
     runtimeReloads: result.agentRestarts,
+    errorRateBefore: result.errorRateBefore,
+    errorRateAfter: result.errorRateAfter,
     auditAnswers,
     durationMs: performance.now() - started,
   };

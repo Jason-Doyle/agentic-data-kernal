@@ -72,7 +72,7 @@ jobs:
       - run: npm test
       - name: Run SRE comparison and verify published evidence
         env:
-          BENCHMARK_REPETITIONS: 1
+          BENCHMARK_REPETITIONS: 3
         run: npm run benchmark:sre:verify
       - name: Show container logs
         if: failure()
