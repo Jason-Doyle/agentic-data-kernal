@@ -14,6 +14,8 @@ export const auditQuestions = [
   "verification and terminal state",
 ] as const;
 
+export type AuditQuestion = (typeof auditQuestions)[number];
+
 export interface BenchmarkOutcome {
   variant: "conventional-postgres" | "agentic-data-kernel";
   finalState: string;
@@ -47,11 +49,10 @@ export function assertCorrectness(outcome: BenchmarkOutcome): void {
 }
 
 export function auditMap(
-  answered: readonly (typeof auditQuestions)[number][],
+  answers: Record<AuditQuestion, boolean>,
 ): Record<string, boolean> {
-  const values = new Set(answered);
   return Object.fromEntries(
-    auditQuestions.map((question) => [question, values.has(question)]),
+    auditQuestions.map((question) => [question, answers[question]]),
   );
 }
 

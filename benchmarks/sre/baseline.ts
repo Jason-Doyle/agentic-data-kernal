@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import type { SharedRemediation } from "./shared.js";
 import {
-  auditQuestions,
   auditMap,
   type BenchmarkOutcome,
 } from "./shared.js";
@@ -66,10 +65,13 @@ export async function runConventionalBaseline(options: {
     );
     await first.query(
       `INSERT INTO effects (
-         effect_id, incident_id, provider_namespace, idempotency_key,
-         request_hash, request, status
+         effect_id, incident_id, provider_namespace, target_url, status_url,
+         idempotency_key, request_hash, request, status, authorization_fence
        ) VALUES (
-         $1, $2, 'https://deployments.example.com', $3, $4, $5, 'planned'
+         $1, $2, 'https://deployments.example.com',
+         'https://deployments.example.com/rollback',
+         'https://deployments.example.com/status/rollback',
+         $3, $4, $5, 'planned', $6
        )`,
       [
         effectId,
@@ -77,10 +79,15 @@ export async function runConventionalBaseline(options: {
         idempotencyKey,
         requestHash,
         JSON.stringify(request),
+        `fence:${options.runId}`,
       ],
     );
     await first.query(
       `INSERT INTO lineage VALUES
+       ('observation','obs:deploy','supports','hypothesis','hyp:deploy:v1'),
+       ('observation','obs:error','supports','hypothesis','hyp:deploy:v1'),
+       ('observation','obs:db','supports','hypothesis','hyp:db:v1'),
+       ('observation','obs:deploy','contradicts','hypothesis','hyp:db:v1'),
        ('observation','obs:deploy','supports','hypothesis','hyp:deploy:v2'),
        ('observation','obs:error','supports','hypothesis','hyp:deploy:v2'),
        ('observation','obs:db','supports','hypothesis','hyp:db:v2'),
@@ -207,7 +214,14 @@ export async function runConventionalBaseline(options: {
       ],
     );
     await third.query("COMMIT");
-    const audit = await auditBaseline(third, incidentId, effectId);
+    const audit = await auditBaseline(third, {
+      incidentId,
+      effectId,
+      idempotencyKey,
+      requestHash,
+      authorizationFence: `fence:${options.runId}`,
+      providerReference: options.remediation.providerReference,
+    });
     const state = await third.query<{ state: string; status: string }>(
       `SELECT incident.state, effect.status
        FROM incidents incident
@@ -232,66 +246,277 @@ export async function runConventionalBaseline(options: {
 
 async function auditBaseline(
   client: Client,
-  incidentId: string,
-  effectId: string,
+  expected: {
+    incidentId: string;
+    effectId: string;
+    idempotencyKey: string;
+    requestHash: string;
+    authorizationFence: string;
+    providerReference: string;
+  },
 ): Promise<Record<string, boolean>> {
-  const counts = await client.query<{
-    observations: string;
-    hypotheses: string;
-    revisions: string;
-    decisions: string;
-    effects: string;
-    attempts: string;
-    verifications: string;
-    terminal: boolean;
+  const audit = await client.query<{
+    initiating_observation: boolean;
+    competing_hypotheses: boolean;
+    confidence_revisions: boolean;
+    selected_hypothesis_and_policy: boolean;
+    decision_and_authorization: boolean;
+    effect_target_and_idempotency_key: boolean;
+    ambiguous_delivery_attempt: boolean;
+    provider_reconciliation: boolean;
+    verification_and_terminal_state: boolean;
   }>(
     `SELECT
-       (SELECT count(*) FROM observations WHERE incident_id = $1)::TEXT
-         AS observations,
-       (SELECT count(*) FROM hypotheses WHERE incident_id = $1)::TEXT
-         AS hypotheses,
+       EXISTS (
+         SELECT 1
+         FROM observations
+         WHERE observation_id = 'obs:error'
+           AND incident_id = $1
+           AND predicate = 'error_rate'
+           AND value = '0.42'::JSONB
+           AND source = 'monitoring'
+       ) AS initiating_observation,
        (
-         SELECT count(*) FROM hypotheses
-         WHERE incident_id = $1 AND supersedes_id IS NOT NULL
-       )::TEXT AS revisions,
-       (SELECT count(*) FROM decisions WHERE incident_id = $1)::TEXT
-         AS decisions,
-       (SELECT count(*) FROM effects WHERE effect_id = $2)::TEXT AS effects,
+         EXISTS (
+           SELECT 1
+           FROM hypotheses
+           WHERE hypothesis_id = 'hyp:deploy:v1'
+             AND incident_id = $1
+             AND cause = 'deployment api-v42'
+             AND probability = 0.58
+             AND authority = 70
+             AND supersedes_id IS NULL
+             AND active = FALSE
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM hypotheses
+           WHERE hypothesis_id = 'hyp:db:v1'
+             AND incident_id = $1
+             AND cause = 'database saturation'
+             AND probability = 0.42
+             AND authority = 65
+             AND supersedes_id IS NULL
+             AND active = FALSE
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM lineage
+           WHERE from_type = 'observation'
+             AND from_id = 'obs:deploy'
+             AND relation = 'supports'
+             AND to_type = 'hypothesis'
+             AND to_id = 'hyp:deploy:v1'
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM lineage
+           WHERE from_type = 'observation'
+             AND from_id = 'obs:db'
+             AND relation = 'supports'
+             AND to_type = 'hypothesis'
+             AND to_id = 'hyp:db:v1'
+         )
+       ) AS competing_hypotheses,
        (
-         SELECT count(*) FROM effect_attempts WHERE effect_id = $2
-       )::TEXT AS attempts,
+         EXISTS (
+           SELECT 1
+           FROM hypotheses
+           WHERE hypothesis_id = 'hyp:deploy:v2'
+             AND incident_id = $1
+             AND cause = 'deployment api-v42'
+             AND probability = 0.88
+             AND authority = 90
+             AND supersedes_id = 'hyp:deploy:v1'
+             AND active = TRUE
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM hypotheses
+           WHERE hypothesis_id = 'hyp:db:v2'
+             AND incident_id = $1
+             AND cause = 'database saturation'
+             AND probability = 0.12
+             AND authority = 40
+             AND supersedes_id = 'hyp:db:v1'
+             AND active = TRUE
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM lineage
+           WHERE from_type = 'observation'
+             AND from_id = 'obs:deploy'
+             AND relation = 'supports'
+             AND to_type = 'hypothesis'
+             AND to_id = 'hyp:deploy:v2'
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM lineage
+           WHERE from_type = 'observation'
+             AND from_id = 'obs:db'
+             AND relation = 'supports'
+             AND to_type = 'hypothesis'
+             AND to_id = 'hyp:db:v2'
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM lineage
+           WHERE from_type = 'observation'
+             AND from_id = 'obs:db'
+             AND relation = 'contradicts'
+             AND to_type = 'hypothesis'
+             AND to_id = 'hyp:deploy:v2'
+         )
+       ) AS confidence_revisions,
        (
-         SELECT count(*) FROM verifications WHERE effect_id = $2
-       )::TEXT AS verifications,
-       (SELECT terminal FROM incidents WHERE incident_id = $1) AS terminal`,
-    [incidentId, effectId],
+         EXISTS (
+           SELECT 1
+           FROM decisions
+           WHERE decision_id = 'decision:rollback'
+             AND incident_id = $1
+             AND hypothesis_id = 'hyp:deploy:v2'
+             AND policy = 'incident-remediation-v2'
+             AND action = 'rollback api-v42'
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM lineage
+           WHERE from_type = 'hypothesis'
+             AND from_id = 'hyp:deploy:v2'
+             AND relation = 'supports'
+             AND to_type = 'decision'
+             AND to_id = 'decision:rollback'
+         )
+       ) AS selected_hypothesis_and_policy,
+       EXISTS (
+         SELECT 1
+         FROM lineage
+         WHERE from_type = 'decision'
+           AND from_id = 'decision:rollback'
+           AND relation = 'authorizes'
+           AND to_type = 'effect'
+           AND to_id = $2
+       )
+       AND EXISTS (
+         SELECT 1
+         FROM effects
+         WHERE effect_id = $2
+           AND incident_id = $1
+           AND authorization_fence = $5
+       ) AS decision_and_authorization,
+       EXISTS (
+         SELECT 1
+         FROM effects
+         WHERE effect_id = $2
+           AND incident_id = $1
+           AND provider_namespace = 'https://deployments.example.com'
+           AND target_url = 'https://deployments.example.com/rollback'
+           AND status_url =
+             'https://deployments.example.com/status/rollback'
+           AND idempotency_key = $3
+           AND request_hash = $4
+           AND request =
+             '{"deployment":"api-v42","service":"checkout-api"}'::JSONB
+       ) AS effect_target_and_idempotency_key,
+       EXISTS (
+         SELECT 1
+         FROM effect_attempts
+         WHERE effect_id = $2
+           AND attempt_number = 1
+           AND mode = 'deliver'
+           AND status = 'unknown'
+           AND outcome = jsonb_build_object(
+             'reason', 'response_timeout_after_apply',
+             'idempotencyKey', $3::TEXT
+           )
+       ) AS ambiguous_delivery_attempt,
+       (
+         EXISTS (
+           SELECT 1
+           FROM effect_attempts
+           WHERE effect_id = $2
+             AND attempt_number = 2
+             AND mode = 'reconcile'
+             AND status = 'succeeded'
+             AND outcome = jsonb_build_object(
+               'providerReference', $6::TEXT
+             )
+         )
+         AND (
+           SELECT count(*) = 2
+           FROM effect_attempts
+           WHERE effect_id = $2
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM effects
+           WHERE effect_id = $2
+             AND status = 'succeeded'
+             AND outcome = jsonb_build_object(
+               'providerReference', $6::TEXT
+             )
+         )
+       ) AS provider_reconciliation,
+       (
+         EXISTS (
+           SELECT 1
+           FROM verifications
+           WHERE verification_id = 'verification:recovery'
+             AND incident_id = $1
+             AND effect_id = $2
+             AND error_rate = 0.03
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM lineage
+           WHERE from_type = 'effect'
+             AND from_id = $2
+             AND relation = 'verifies'
+             AND to_type = 'verification'
+             AND to_id = 'verification:recovery'
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM incidents
+           WHERE incident_id = $1
+             AND state = 'resolved'
+             AND revision = 5
+             AND terminal = TRUE
+             AND data = jsonb_build_object(
+               'effectId', $2::TEXT,
+               'verificationId', 'verification:recovery',
+               'errorRate', 0.03
+             )
+         )
+       ) AS verification_and_terminal_state`,
+    [
+      expected.incidentId,
+      expected.effectId,
+      expected.idempotencyKey,
+      expected.requestHash,
+      expected.authorizationFence,
+      expected.providerReference,
+    ],
   );
-  const value = counts.rows[0];
-  const answered: Array<(typeof auditQuestions)[number]> = [];
-  if (Number(value?.observations) >= 3) {
-    answered.push("initiating observation");
+  const value = audit.rows[0];
+  if (!value) {
+    throw new Error("Conventional PostgreSQL audit query returned no result");
   }
-  if (Number(value?.hypotheses) >= 2) {
-    answered.push("competing hypotheses");
-  }
-  if (Number(value?.revisions) >= 2) {
-    answered.push("confidence revisions");
-  }
-  if (Number(value?.decisions) === 1) {
-    answered.push("selected hypothesis and policy");
-    answered.push("decision and authorization");
-  }
-  if (Number(value?.effects) === 1) {
-    answered.push("effect target and idempotency key");
-  }
-  if (Number(value?.attempts) === 2) {
-    answered.push("ambiguous delivery attempt");
-    answered.push("provider reconciliation");
-  }
-  if (Number(value?.verifications) === 1 && value?.terminal === true) {
-    answered.push("verification and terminal state");
-  }
-  return auditMap(answered);
+  return auditMap({
+    "initiating observation": value.initiating_observation,
+    "competing hypotheses": value.competing_hypotheses,
+    "confidence revisions": value.confidence_revisions,
+    "selected hypothesis and policy":
+      value.selected_hypothesis_and_policy,
+    "decision and authorization": value.decision_and_authorization,
+    "effect target and idempotency key":
+      value.effect_target_and_idempotency_key,
+    "ambiguous delivery attempt": value.ambiguous_delivery_attempt,
+    "provider reconciliation": value.provider_reconciliation,
+    "verification and terminal state":
+      value.verification_and_terminal_state,
+  });
 }
 
 function hash(value: string): string {

@@ -95,6 +95,7 @@
     "example:mock-embeddings": "node dist/examples/mock-embedding-server.js",
     "example:mock-effects": "node dist/examples/mock-effect-receiver.js",
     "benchmark:sre": "npm run build && tsx benchmarks/sre/run.ts",
+    "benchmark:sre:verify": "npm run benchmark:sre -- --verify-results",
     "serve": "npm run build && node --no-warnings dist/cli.js serve --db .data/agentic.db",
     "mcp": "npm run build && node --no-warnings dist/cli.js mcp --db .data/agentic.db",
     "prod:migrate": "npm run build && node --env-file=.env dist/production/cli.js migrate",

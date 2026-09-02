@@ -34,6 +34,11 @@ Use `BENCHMARK_WRITE_RESULTS=1` to regenerate `results/summary.json` and
 
 `summary.json` includes every per-run outcome, audit answer, table count,
 database footprint, and informational duration used by the aggregate report.
+It also includes a portable source hash over the benchmark, production kernel,
+migrations, lockfile, and PostgreSQL container configuration.
+
+CI runs the comparison and verifies that the committed report is generated
+from `summary.json` and that the evidence source hash is current.
 
 ## Metrics
 
@@ -48,9 +53,10 @@ Correctness is a merge gate:
 The report also records application-owned nonblank source lines, app-authored
 tables, total operated tables, database footprint, and informational runtime.
 
-Application LOC excludes the shared harness and the kernel dependency. The
-report separately discloses the dependency source size and total operated table
-count so code and schema are not presented as having disappeared.
+Application LOC excludes the benchmark runner, engine-specific audit queries,
+and the kernel dependency. The report separately discloses the benchmark
+harness, shipped SRE scenario, full dependency source size, and total operated
+table count so code and schema are not presented as having disappeared.
 
 ## Not claimed
 
@@ -61,3 +67,6 @@ count so code and schema are not presented as having disappeared.
 - Runtime duration is not a performance benchmark.
 - Database size is expected to favor the narrower conventional schema.
 - LOC is not a direct measure of developer productivity.
+- Adapter LOC measures reuse of the shipped SRE scenario. It is not a
+  comparison of two equivalent scenario implementations written from generic
+  primitives.

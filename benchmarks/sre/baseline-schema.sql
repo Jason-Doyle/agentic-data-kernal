@@ -36,10 +36,13 @@ CREATE TABLE effects (
   effect_id TEXT PRIMARY KEY,
   incident_id TEXT NOT NULL REFERENCES incidents (incident_id),
   provider_namespace TEXT NOT NULL,
+  target_url TEXT NOT NULL,
+  status_url TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   request_hash TEXT NOT NULL,
   request JSONB NOT NULL,
   status TEXT NOT NULL,
+  authorization_fence TEXT NOT NULL,
   next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   outcome JSONB,
   UNIQUE (provider_namespace, idempotency_key)

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -69,6 +70,9 @@ if (process.env.BENCHMARK_WRITE_RESULTS === "1") {
     join(resultsDirectory, "report.md"),
     renderReport(summary),
   );
+}
+if (process.argv.includes("--verify-results")) {
+  verifyPublishedResults();
 }
 
 async function runVariant(
@@ -151,6 +155,7 @@ function createSummary(values: BenchmarkMeasurement[]) {
       node: process.version,
       postgres: postgresVersion,
       commit: gitCommit(),
+      sourceHash: benchmarkSourceHash(),
     },
     runs: values,
     correctness: {
@@ -159,17 +164,25 @@ function createSummary(values: BenchmarkMeasurement[]) {
     },
     applicationSurface: {
       conventionalPostgres: {
-        nonblankLines: sourceLines([
-          "benchmarks/sre/baseline.ts",
-          "benchmarks/sre/baseline-schema.sql",
-        ]),
+        nonblankLines:
+          sourceLinesBefore(
+            "benchmarks/sre/baseline.ts",
+            "async function auditBaseline",
+          ) +
+          sourceLines(["benchmarks/sre/baseline-schema.sql"]),
         authoredTables: 8,
         operatedTables: median(baseline.map((value) => value.operatedTables)),
       },
       agenticDataKernel: {
-        nonblankLines: sourceLines(["benchmarks/sre/kernel.ts"]),
+        nonblankLines: sourceLinesBefore(
+          "benchmarks/sre/kernel.ts",
+          "async function auditKernel",
+        ),
         authoredTables: 0,
         operatedTables: median(kernel.map((value) => value.operatedTables)),
+        scenarioSourceLines: sourceLines([
+          "src/production/sre-scenario.ts",
+        ]),
         dependencySourceLines: sourceLines(
           listFiles("src").filter(
             (path) =>
@@ -178,6 +191,25 @@ function createSummary(values: BenchmarkMeasurement[]) {
           ),
         ),
       },
+    },
+    benchmarkHarness: {
+      nonblankLines:
+        sourceLines(
+          listFiles("benchmarks/sre").filter(
+            (path) =>
+              extname(path) === ".ts" &&
+              !path.endsWith("baseline.ts") &&
+              !path.endsWith("kernel.ts"),
+          ),
+        ) +
+        sourceLinesFrom(
+          "benchmarks/sre/baseline.ts",
+          "async function auditBaseline",
+        ) +
+        sourceLinesFrom(
+          "benchmarks/sre/kernel.ts",
+          "async function auditKernel",
+        ),
     },
     databaseBytes: {
       conventionalPostgresMedian: median(
@@ -226,6 +258,10 @@ function renderReport(summary: ReturnType<typeof createSummary>): string {
 
 Generated from \`summary.json\`.
 
+Source revision: \`${summary.environment.commit}\`
+
+Source hash: \`${summary.environment.sourceHash}\`
+
 ## Correctness
 
 Both variants must resolve every run with one delivery and one reconciliation.
@@ -242,9 +278,16 @@ Both variants must resolve every run with one delivery and one reconciliation.
 | Conventional PostgreSQL | ${baseline.nonblankLines} | ${baseline.authoredTables} | ${baseline.operatedTables} |
 | Agentic Data Kernel adapter | ${kernel.nonblankLines} | ${kernel.authoredTables} | ${kernel.operatedTables} |
 
-The kernel dependency contains ${kernel.dependencySourceLines} nonblank TypeScript
-source lines. That code is not application-authored, but it remains
-infrastructure that adopters operate and upgrade.
+The adapter delegates to the shipped SRE scenario, which contains
+${kernel.scenarioSourceLines} nonblank TypeScript source lines inside the
+dependency. The full kernel dependency contains ${kernel.dependencySourceLines}
+nonblank TypeScript source lines.
+
+The benchmark runner and engine-specific audit verification contain
+${summary.benchmarkHarness.nonblankLines} nonblank TypeScript source lines.
+They are excluded from both application columns. Dependency and harness code
+is not application-authored, but it remains code that must be understood,
+operated, or upgraded.
 
 ## Database footprint
 
@@ -270,7 +313,33 @@ deterministic smoke benchmark is not a latency study.
 - It does not measure operating-system process crash recovery.
 - It does not claim runtime or storage superiority.
 - LOC is a structural observation, not a productivity measurement.
+- Adapter LOC measures reuse of the shipped SRE scenario, not equivalent
+  scenario implementations written from generic primitives.
 `;
+}
+
+function verifyPublishedResults(): void {
+  const resultsDirectory = resolve("benchmarks", "sre", "results");
+  const summaryPath = join(resultsDirectory, "summary.json");
+  const reportPath = join(resultsDirectory, "report.md");
+  const published = JSON.parse(
+    readFileSync(summaryPath, "utf8"),
+  ) as ReturnType<typeof createSummary>;
+  const expectedHash = benchmarkSourceHash();
+  if (published.environment?.sourceHash !== expectedHash) {
+    throw new Error(
+      "Published SRE benchmark evidence is stale; regenerate the results",
+    );
+  }
+  const expectedReport = normalizeLineEndings(renderReport(published));
+  const actualReport = normalizeLineEndings(
+    readFileSync(reportPath, "utf8"),
+  );
+  if (actualReport !== expectedReport) {
+    throw new Error(
+      "Published SRE benchmark report does not match summary.json",
+    );
+  }
 }
 
 function testConfig(
@@ -311,13 +380,33 @@ function testConfig(
 
 function sourceLines(paths: string[]): number {
   return paths.reduce(
-    (total, path) =>
-      total +
-      readFileSync(resolve(path), "utf8")
-        .split(/\r?\n/)
-        .filter((line) => line.trim().length > 0).length,
+    (total, path) => total + nonblankLines(readFileSync(resolve(path), "utf8")),
     0,
   );
+}
+
+function sourceLinesBefore(path: string, marker: string): number {
+  const source = readFileSync(resolve(path), "utf8");
+  const markerIndex = source.indexOf(marker);
+  if (markerIndex < 0) {
+    throw new Error(`Source marker was not found in ${path}`);
+  }
+  return nonblankLines(source.slice(0, markerIndex));
+}
+
+function sourceLinesFrom(path: string, marker: string): number {
+  const source = readFileSync(resolve(path), "utf8");
+  const markerIndex = source.indexOf(marker);
+  if (markerIndex < 0) {
+    throw new Error(`Source marker was not found in ${path}`);
+  }
+  return nonblankLines(source.slice(markerIndex));
+}
+
+function nonblankLines(source: string): number {
+  return source
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0).length;
 }
 
 function listFiles(directory: string): string[] {
@@ -331,6 +420,39 @@ function listFiles(directory: string): string[] {
     }
   }
   return paths;
+}
+
+function benchmarkSourceHash(): string {
+  const paths = [
+    "package.json",
+    "package-lock.json",
+    "docker-compose.yml",
+    ...listFiles("benchmarks/sre").filter((path) =>
+      [".sql", ".ts"].includes(extname(path)),
+    ),
+    ...listFiles("migrations/postgres").filter(
+      (path) => extname(path) === ".sql",
+    ),
+    ...listFiles("src").filter(
+      (path) =>
+        extname(path) === ".ts" &&
+        !path.split(/[\\/]/).includes("test"),
+    ),
+  ].map((path) => path.replaceAll("\\", "/")).sort();
+  const digest = createHash("sha256");
+  for (const path of paths) {
+    digest.update(path);
+    digest.update("\0");
+    digest.update(
+      normalizeLineEndings(readFileSync(resolve(path), "utf8")),
+    );
+    digest.update("\0");
+  }
+  return digest.digest("hex");
+}
+
+function normalizeLineEndings(value: string): string {
+  return value.replaceAll("\r\n", "\n");
 }
 
 function median(values: number[]): number {
