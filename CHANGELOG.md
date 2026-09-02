@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0-alpha.2
+
 - Made the PostgreSQL embedding model, version, and indexed dimensions
   deployment-configurable up to 2000 dimensions.
 - Reworked hybrid search to retrieve bounded HNSW and full-text candidates
