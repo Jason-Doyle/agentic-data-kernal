@@ -67,3 +67,6 @@ issue.
 - One PostgreSQL primary is assumed by the included Compose profile.
 - External effect receivers must honor the supplied idempotency key for
   effectively-once behavior.
+- This private repository runs CodeQL without GitHub code-scanning upload and
+  retains the SARIF report as a workflow artifact. Enable GitHub code scanning
+  before switching the workflow to direct alert upload.
