@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0-alpha.2
+
 - Added bounded causal explanation graphs with structured and human-readable
   TypeScript, Agent Intent, HTTP, MCP, and CLI surfaces.
 - Added sanitized artifact nodes and effect-attempt details to trace output.
