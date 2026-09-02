@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+## 0.3.0-alpha.3
+
 - Added a reproducible SRE comparison between a competent conventional
   PostgreSQL implementation and the kernel scenario.
 - Added correctness parity gates, engine-neutral audit questions, application
   surface measurements, database footprint, and raw generated results.
+- Added injectable SRE remediation transports with validated delivery and
+  reconciliation identity.
 
 ## 0.3.0-alpha.2
 

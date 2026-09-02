@@ -94,7 +94,7 @@ operated infrastructure, database footprint, and informational runtime. See
 
 ## Project status
 
-The current release is `0.3.0-alpha.2`.
+The current release is `0.3.0-alpha.3`.
 
 Two runtime profiles are maintained:
 
@@ -269,7 +269,7 @@ Use the versioned production image:
 ```powershell
 Copy-Item .env.example .env
 .\scripts\generate-secrets.ps1
-$env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:0.3.0-alpha.2"
+$env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:0.3.0-alpha.3"
 docker compose --profile server pull
 docker compose --profile server up --no-build
 ```
