@@ -1,7 +1,7 @@
 import {
-  createHmac,
   randomBytes,
   randomUUID,
+  scrypt,
   timingSafeEqual,
 } from "node:crypto";
 import type { PoolClient } from "pg";
@@ -68,7 +68,11 @@ export async function createApiKey(
   const keyId = randomUUID();
   const secret = randomBytes(32).toString("base64url");
   const token = `adk.${keyId}.${secret}`;
-  const tokenHash = hashToken(token, config.authPepper);
+  const tokenHash = await deriveTokenHash(
+    token,
+    config.authPepper,
+    keyId,
+  );
 
   await database.withSystemWriteTransaction(async (client) => {
     await client.query(
@@ -129,7 +133,10 @@ export async function authenticateToken(
   if (row.expires_at && row.expires_at.getTime() <= Date.now()) {
     throw new AuthenticationError("API key has expired");
   }
-  const supplied = Buffer.from(hashToken(token, config.authPepper), "hex");
+  const supplied = Buffer.from(
+    await deriveTokenHash(token, config.authPepper, parsed.keyId),
+    "hex",
+  );
   const expected = Buffer.from(row.token_hash, "hex");
   if (
     supplied.length !== expected.length ||
@@ -223,8 +230,31 @@ function parseToken(token: string): { keyId: string } {
   return { keyId: match[1] };
 }
 
-function hashToken(token: string, pepper: string): string {
-  return createHmac("sha256", pepper).update(token).digest("hex");
+function deriveTokenHash(
+  token: string,
+  pepper: string,
+  keyId: string,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    scrypt(
+      token,
+      Buffer.from(`${keyId}:${pepper}`, "utf8"),
+      32,
+      {
+        N: 16_384,
+        r: 8,
+        p: 1,
+        maxmem: 64 * 1024 * 1024,
+      },
+      (error, derivedKey) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(Buffer.from(derivedKey).toString("hex"));
+      },
+    );
+  });
 }
 
 function validateScopes(scopes: string[]): void {

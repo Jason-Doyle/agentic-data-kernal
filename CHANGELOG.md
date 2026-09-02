@@ -4,7 +4,7 @@
 
 - Added a PostgreSQL 18 and pgvector production profile.
 - Added forced tenant row-level security with a non-superuser runtime role.
-- Added scoped, purpose-bound API keys with peppered token hashes.
+- Added scoped, purpose-bound API keys with peppered scrypt-derived hashes.
 - Added encrypted immutable artifact storage with key rotation support.
 - Added OpenAI-compatible 1536-dimensional embeddings without silent fallback.
 - Added authenticated HTTP and MCP production interfaces.

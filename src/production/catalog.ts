@@ -57,7 +57,7 @@ export function productionCatalog(): CatalogDescription & {
       "idempotent effect delivery and unknown-outcome reconciliation",
     ],
     security: [
-      "Bearer API keys are stored as peppered HMAC hashes",
+      "Bearer API keys are stored as peppered scrypt-derived hashes",
       "raw SQL is not exposed over the production network API",
       "effect targets require HTTPS, an allowlisted host, and public DNS",
       "payment outcomes cannot be asserted through the public intent API",

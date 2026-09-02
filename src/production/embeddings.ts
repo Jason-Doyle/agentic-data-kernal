@@ -21,14 +21,23 @@ export class OpenAiCompatibleEmbeddingProvider
   implements EmbeddingProvider
 {
   public readonly version = "openai-compatible-v1";
+  private readonly embeddingsUrl: string;
 
   public constructor(
-    private readonly baseUrl: string,
+    baseUrl: string,
     private readonly apiKey: string,
     public readonly model: string,
     public readonly dimensions: number,
     private readonly timeoutMs: number,
-  ) {}
+  ) {
+    const normalizedBaseUrl = baseUrl.endsWith("/")
+      ? baseUrl
+      : `${baseUrl}/`;
+    this.embeddingsUrl = new URL(
+      "embeddings",
+      normalizedBaseUrl,
+    ).toString();
+  }
 
   public async embed(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) {
@@ -46,9 +55,7 @@ export class OpenAiCompatibleEmbeddingProvider
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const response = await fetch(
-          `${this.baseUrl.replace(/\/+$/, "")}/embeddings`,
-          {
+        const response = await fetch(this.embeddingsUrl, {
             method: "POST",
             headers: {
               authorization: `Bearer ${this.apiKey}`,
@@ -60,8 +67,7 @@ export class OpenAiCompatibleEmbeddingProvider
               dimensions: this.dimensions,
             }),
             signal: AbortSignal.timeout(this.timeoutMs),
-          },
-        );
+        });
         if (!response.ok) {
           const detail = (await response.text()).slice(0, 1_000);
           if (response.status === 429 || response.status >= 500) {
