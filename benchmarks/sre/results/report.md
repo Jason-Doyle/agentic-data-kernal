@@ -2,9 +2,9 @@
 
 Generated from `summary.json`.
 
-Source revision: `ee8e477e253d249b532adf16cbeefafd13d898c3`
+Source revision: `b11e26f47b7fab96b04d28a604658b2fcabb6d43`
 
-Source hash: `7c5135c62998eb55986b768b3967176935630e60c0547402515d20abae9e2c4f`
+Source hash: `7896ded0768493c0e9694b5df9f8da9bcda16a96d9a51f117ed2f1bdb39cd108`
 
 ## Correctness
 
@@ -28,7 +28,7 @@ dependency. The full kernel dependency contains 13247
 nonblank TypeScript source lines.
 
 The benchmark runner and engine-specific audit verification contain
-1168 nonblank TypeScript source lines.
+1289 nonblank TypeScript source lines.
 They are excluded from both application columns. Dependency and harness code
 is not application-authored, but it remains code that must be understood,
 operated, or upgraded.
@@ -44,8 +44,8 @@ operated, or upgraded.
 
 | Variant | Median milliseconds |
 | --- | ---: |
-| Conventional PostgreSQL | 55.94 |
-| Agentic Data Kernel | 829.81 |
+| Conventional PostgreSQL | 65.48 |
+| Agentic Data Kernel | 1002.14 |
 
 Runtime is not a headline metric. The variants perform different work and this
 deterministic smoke benchmark is not a latency study.
