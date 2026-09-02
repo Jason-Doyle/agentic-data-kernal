@@ -50,6 +50,7 @@ authenticated API key.
 | `advance_workflow` | `workflows:run` | Commit a guarded workflow transition |
 | `request_effect` | `effects:write` | Request an authorized generic external effect |
 | `add_lineage` | `data:write` | Add a typed causal link between durable records |
+| `explain` | `data:read` | Traverse bounded typed causal lineage |
 | `seed_inventory` | `inventory:admin` | Create initial inventory for a SKU and location |
 | `reserve_inventory` | `orders:write` | Reserve stock and start an order workflow |
 | `request_payment` | `effects:write` | Reserve effect budget and create a payment intent |
@@ -126,6 +127,13 @@ Endpoints are tenant-scoped and FK validated. `authorizes` requires a decision,
 Creating an assertion with a source artifact automatically records
 `evidence_for`. Generic effect creation automatically records decision,
 policy, and workflow-revision links.
+
+## Explain
+
+`explain` accepts an artifact, assertion, workflow revision, or effect target
+and a maximum depth from 0 through 8. It returns typed nodes, explicit lineage
+edges, sanitized records, and a `truncated` flag. Artifact plaintext is never
+included. See [Explain and Trace](EXPLAIN.md).
 
 ## Typed values
 

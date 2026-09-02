@@ -38,6 +38,8 @@ single governed system. It is designed for applications that need to answer:
 - Encrypted immutable artifact storage with key rotation
 - Authorized effect delivery with budgets, retries, and status reconciliation
 - Decision- and policy-bound non-retail effects with isolated finalization
+- Bounded explanation graphs from evidence through decisions, effects, and
+  verification
 - HTTP, MCP, TypeScript, CLI, and read-only local SQL interfaces
 
 ## Use cases
@@ -72,6 +74,8 @@ npm run example:sre
 
 See [docs/SRE_SCENARIO.md](docs/SRE_SCENARIO.md) for setup, expected output,
 and demonstrated invariants.
+
+The example also prints a human-readable trace rooted at the rollback effect.
 
 ## Project status
 
@@ -215,6 +219,7 @@ It publishes `agentic-data://catalog` and these tools:
 - `execute_intent`
 - `search_knowledge`
 - `resolve_claims`
+- `explain_trace`
 - `reserve_inventory`
 - `get_machine`
 
@@ -342,6 +347,7 @@ HTTP / MCP / TypeScript / CLI
 - [API reference](docs/API.md)
 - [Production profile](docs/PRODUCTION.md)
 - [Flagship SRE scenario](docs/SRE_SCENARIO.md)
+- [Explain and trace](docs/EXPLAIN.md)
 - [Release process](docs/RELEASING.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Security policy](SECURITY.md)

@@ -14,6 +14,8 @@ export interface TenantContext {
   scopes: Set<string>;
 }
 
+export type TransactionIsolation = "READ COMMITTED" | "REPEATABLE READ";
+
 export class ProductionDatabase {
   public readonly pool: Pool;
 
@@ -37,10 +39,16 @@ export class ProductionDatabase {
 
   public async withSystemTransaction<T>(
     operation: (client: PoolClient) => Promise<T>,
+    isolation: TransactionIsolation = "READ COMMITTED",
   ): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      if (isolation === "REPEATABLE READ") {
+        await client.query(
+          "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+        );
+      }
       await client.query(
         "SELECT set_config('statement_timeout', $1, true)",
         [String(this.config.statementTimeoutMs)],
@@ -68,6 +76,7 @@ export class ProductionDatabase {
   public async withTenantTransaction<T>(
     context: TenantContext,
     operation: (client: PoolClient) => Promise<T>,
+    isolation: TransactionIsolation = "READ COMMITTED",
   ): Promise<T> {
     return this.withSystemTransaction(async (client) => {
       await client.query(
@@ -84,12 +93,13 @@ export class ProductionDatabase {
         ],
       );
       return operation(client);
-    });
+    }, isolation);
   }
 
   public async withTenantWriteTransaction<T>(
     context: TenantContext,
     operation: (client: PoolClient) => Promise<T>,
+    isolation: TransactionIsolation = "READ COMMITTED",
   ): Promise<T> {
     return this.withSystemTransaction(async (client) => {
       await client.query(
@@ -107,7 +117,7 @@ export class ProductionDatabase {
       );
       await this.assertWritesAllowed(client);
       return operation(client);
-    });
+    }, isolation);
   }
 
   public async health(): Promise<boolean> {

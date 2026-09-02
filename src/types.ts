@@ -276,6 +276,21 @@ export interface LineageEdgeRecord {
   createdAt: string;
 }
 
+export interface TraceNode {
+  ref: LineageEndpoint;
+  depth: number;
+  label: string;
+  record: JsonValue;
+}
+
+export interface TraceExplanation {
+  root: LineageEndpoint;
+  maxDepth: number;
+  truncated: boolean;
+  nodes: TraceNode[];
+  edges: LineageEdgeRecord[];
+}
+
 export interface CreateWorkflowInput {
   instanceId: string;
   workflowType: string;

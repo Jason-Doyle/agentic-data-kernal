@@ -25,6 +25,7 @@ test("MCP exposes catalog and executes an intent", async () => {
   const tools = await client.listTools();
   assert.ok(tools.tools.some((tool) => tool.name === "execute_intent"));
   assert.ok(tools.tools.some((tool) => tool.name === "search_knowledge"));
+  assert.ok(tools.tools.some((tool) => tool.name === "explain_trace"));
 
   const resource = await client.readResource({
     uri: "agentic-data://catalog",

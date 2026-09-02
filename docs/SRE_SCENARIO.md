@@ -92,9 +92,16 @@ Example result:
   "reconciliationCount": 1,
   "agentRestarts": 2,
   "errorRateBefore": 0.42,
-  "errorRateAfter": 0.03
+  "errorRateAfter": 0.03,
+  "traceNodeCount": 16,
+  "traceEdgeCount": 19
 }
 ```
+
+The command then prints a trace rooted at the rollback effect. It shows the
+authorizing decision, governing policy, workflow revision, selected hypothesis,
+supporting and contradicting observations, source artifacts, effect attempts,
+and verification.
 
 ## Durable records
 

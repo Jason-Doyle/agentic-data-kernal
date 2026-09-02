@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import {
+  formatTraceExplanation,
+  traceEndpointKey,
+} from "../explain.js";
 import { executeIntent } from "../ir.js";
 import { AgenticKernel, KernelError } from "../kernel.js";
 import { SqliteStore } from "../store.js";
@@ -173,6 +177,66 @@ test("generic workflows, effects, and lineage preserve agency history", () => {
         "verifies",
       ],
     );
+    const explanation = kernel.explain(
+      principal.tenantId,
+      { type: "effect", effectId: effect.effectId },
+      4,
+    );
+    assert.ok(explanation.nodes.length >= 7);
+    assert.ok(explanation.edges.length >= 7);
+    const formatted = formatTraceExplanation(explanation);
+    assert.match(formatted, /deployment\.rollback effect succeeded/);
+    assert.match(formatted, /attempt 1: unknown/);
+    assert.match(formatted, /attempt 2: succeeded/);
+    const artifactNode = explanation.nodes.find(
+      (node) =>
+        node.ref.type === "artifact" &&
+        node.ref.artifactId === "artifact:alert",
+    );
+    assert.ok(artifactNode);
+    assert.equal(
+      artifactNode.record !== null &&
+        !Array.isArray(artifactNode.record) &&
+        typeof artifactNode.record === "object" &&
+        "content" in artifactNode.record,
+      false,
+    );
+    assert.equal(
+      kernel.explain(
+        principal.tenantId,
+        { type: "effect", effectId: effect.effectId },
+        0,
+      ).nodes.length,
+      1,
+    );
+    for (let attempt = 3; attempt <= 25; attempt += 1) {
+      store.run(
+        `INSERT INTO effect_attempts (
+           tenant_id, effect_id, attempt_number, status, outcome_json,
+           created_at
+         ) VALUES (?, ?, ?, 'unknown', ?, ?)`,
+        principal.tenantId,
+        effect.effectId,
+        attempt,
+        JSON.stringify({ detail: "x".repeat(2_000) }),
+        new Date(2026, 0, 1, 0, 0, attempt).toISOString(),
+      );
+    }
+    const boundedAttempts = kernel.explain(
+      principal.tenantId,
+      { type: "effect", effectId: effect.effectId },
+      0,
+    );
+    assert.equal(boundedAttempts.truncated, true);
+    const effectRecord = boundedAttempts.nodes[0]?.record;
+    assert.ok(
+      effectRecord !== null &&
+        !Array.isArray(effectRecord) &&
+        typeof effectRecord === "object",
+    );
+    assert.equal(effectRecord.attemptCount, 25);
+    assert.ok(Array.isArray(effectRecord.attempts));
+    assert.equal(effectRecord.attempts.length, 20);
 
     assert.throws(
       () =>
@@ -416,6 +480,77 @@ test("SQLite upgrades rebuild effect foreign keys without losing data", () => {
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("trace formatting escapes terminal control characters", () => {
+  const formatted = formatTraceExplanation({
+    root: { type: "assertion", assertionId: "root\nid" },
+    maxDepth: 0,
+    truncated: false,
+    nodes: [
+      {
+        ref: { type: "assertion", assertionId: "root\nid" },
+        depth: 0,
+        label: "forged\n[0] node\u001b[2J",
+        record: {},
+      },
+    ],
+    edges: [],
+  });
+  assert.doesNotMatch(formatted, /\u001b/);
+  assert.match(formatted, /root\\nid/);
+  assert.match(formatted, /forged\\n\[0\] node\\u001b\[2J/);
+});
+
+test("trace bounds do not return dangling lineage edges", () => {
+  const store = new SqliteStore(":memory:");
+  const kernel = new AgenticKernel(store);
+  try {
+    kernel.putEntity(principal, {
+      entityId: "trace:entity",
+      entityType: "trace",
+      canonicalName: "Trace Entity",
+    });
+    kernel.assert(principal, {
+      assertionId: "trace:root",
+      subjectEntityId: "trace:entity",
+      predicate: "root",
+      object: { type: "boolean", value: true },
+      kind: "hypothesis",
+    });
+    for (let index = 0; index < 510; index += 1) {
+      const assertionId = `trace:node:${index}`;
+      kernel.assert(principal, {
+        assertionId,
+        subjectEntityId: "trace:entity",
+        predicate: `node_${index}`,
+        object: { type: "number", value: index },
+        kind: "observation",
+      });
+      kernel.addLineage(principal, {
+        relation: "supports",
+        from: { type: "assertion", assertionId },
+        to: { type: "assertion", assertionId: "trace:root" },
+      });
+    }
+    const explanation = kernel.explain(
+      principal.tenantId,
+      { type: "assertion", assertionId: "trace:root" },
+      1,
+    );
+    assert.equal(explanation.nodes.length, 500);
+    assert.equal(explanation.edges.length, 499);
+    assert.equal(explanation.truncated, true);
+    const nodeKeys = new Set(
+      explanation.nodes.map((node) => traceEndpointKey(node.ref)),
+    );
+    for (const edge of explanation.edges) {
+      assert.ok(nodeKeys.has(traceEndpointKey(edge.from)));
+      assert.ok(nodeKeys.has(traceEndpointKey(edge.to)));
+    }
+  } finally {
+    store.close();
   }
 });
 

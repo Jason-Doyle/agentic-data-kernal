@@ -2,6 +2,11 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  formatTraceExplanation,
+  normalizeTraceDepth,
+  parseTraceEndpoint,
+} from "./explain.js";
 import { runExample } from "./example.js";
 import { startHttpServer } from "./http.js";
 import { AgenticKernel } from "./kernel.js";
@@ -48,6 +53,23 @@ async function main(): Promise<void> {
           throw new Error("sql requires --query <read-only SQL>");
         }
         print({ rows: kernel.readSql(query) });
+        break;
+      }
+      case "explain": {
+        const explanation = kernel.explain(
+          requiredOption(args, "--tenant"),
+          parseTraceEndpoint(
+            requiredOption(args, "--type"),
+            requiredOption(args, "--id"),
+            option(args, "--revision"),
+          ),
+          normalizeTraceDepth(Number(option(args, "--depth") ?? "4")),
+        );
+        if (args.includes("--json")) {
+          print(explanation);
+        } else {
+          console.log(formatTraceExplanation(explanation));
+        }
         break;
       }
       case "serve": {
@@ -122,6 +144,8 @@ Usage:
   agentic-data catalog [--db path]
   agentic-data execute --file intent.json [--db path]
   agentic-data sql --query "SELECT ..." [--db path]
+  agentic-data explain --tenant ID --type TYPE --id ID
+                       [--revision N] [--depth N] [--json] [--db path]
   agentic-data serve [--db path] [--host 127.0.0.1] [--port 4318]
   agentic-data mcp [--db path]
 `;

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { formatTraceExplanation } from "../explain.js";
 import type {
   AgentOperation,
   IntentExecutionResult,
@@ -52,6 +53,9 @@ export interface SreScenarioResult {
   agentRestarts: number;
   errorRateBefore: number;
   errorRateAfter: number;
+  traceNodeCount: number;
+  traceEdgeCount: number;
+  explanation: string;
 }
 
 export async function runSreScenario(
@@ -250,6 +254,76 @@ export async function runSreScenario(
       authority: 40,
       supersedesAssertionId: databaseHypothesisV1,
     });
+    await addLineage(
+      firstRuntime.kernel,
+      principal,
+      runId,
+      "deployment-support-revised",
+      {
+        relation: "supports",
+        from: {
+          type: "assertion",
+          assertionId: `assertion:deployment:${runId}`,
+        },
+        to: { type: "assertion", assertionId: selectedHypothesisId },
+      },
+    );
+    await addLineage(
+      firstRuntime.kernel,
+      principal,
+      runId,
+      "error-support-revised",
+      {
+        relation: "supports",
+        from: {
+          type: "assertion",
+          assertionId: `assertion:error-rate:${runId}`,
+        },
+        to: { type: "assertion", assertionId: selectedHypothesisId },
+      },
+    );
+    await addLineage(
+      firstRuntime.kernel,
+      principal,
+      runId,
+      "database-contradicts-revised",
+      {
+        relation: "contradicts",
+        from: {
+          type: "assertion",
+          assertionId: `assertion:database-cpu:${runId}`,
+        },
+        to: { type: "assertion", assertionId: selectedHypothesisId },
+      },
+    );
+    await addLineage(
+      firstRuntime.kernel,
+      principal,
+      runId,
+      "database-support-revised",
+      {
+        relation: "supports",
+        from: {
+          type: "assertion",
+          assertionId: `assertion:database-cpu:${runId}`,
+        },
+        to: { type: "assertion", assertionId: databaseHypothesisV2 },
+      },
+    );
+    await addLineage(
+      firstRuntime.kernel,
+      principal,
+      runId,
+      "deployment-contradicts-revised",
+      {
+        relation: "contradicts",
+        from: {
+          type: "assertion",
+          assertionId: `assertion:deployment:${runId}`,
+        },
+        to: { type: "assertion", assertionId: databaseHypothesisV2 },
+      },
+    );
     const resolution = await execute(
       firstRuntime.kernel,
       principal,
@@ -527,6 +601,11 @@ async function continueAfterFirstRestart(input: {
       { op: "list_effects", instanceId: input.workflowId },
     );
     const effectStatus = firstEffectStatus(effects.result);
+    const explanation = await thirdRuntime.kernel.explainReadOnly(
+      principal,
+      { type: "effect", effectId: input.effectId },
+      4,
+    );
     return {
       runId: input.runId,
       tenantId: input.tenantId,
@@ -544,6 +623,9 @@ async function continueAfterFirstRestart(input: {
       agentRestarts: 2,
       errorRateBefore: input.errorRateBefore,
       errorRateAfter: input.remediation.errorRate,
+      traceNodeCount: explanation.nodes.length,
+      traceEdgeCount: explanation.edges.length,
+      explanation: formatTraceExplanation(explanation),
     };
   } finally {
     await thirdRuntime.database.close();

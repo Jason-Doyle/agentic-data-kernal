@@ -62,3 +62,10 @@ export type {
   SreScenarioOptions,
   SreScenarioResult,
 } from "./sre-scenario.js";
+export {
+  formatTraceExplanation,
+  normalizeTraceDepth,
+  parseTraceEndpoint,
+  summarizeTraceJson,
+  traceEndpointKey,
+} from "../explain.js";

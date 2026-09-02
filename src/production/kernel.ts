@@ -8,6 +8,11 @@ import {
   operationEvidence,
 } from "../kernel.js";
 import {
+  normalizeTraceDepth,
+  summarizeTraceJson,
+  traceEndpointKey,
+} from "../explain.js";
+import {
   parseIntentEnvelope,
   type AgentOperation,
   type IntentExecutionResult,
@@ -28,6 +33,8 @@ import type {
   ResolutionResult,
   SearchHit,
   Strength,
+  TraceExplanation,
+  TraceNode,
   TypedValue,
   WorkflowRecord,
 } from "../types.js";
@@ -175,6 +182,29 @@ interface LineageRow extends QueryResultRow {
   to_effect_id: string | null;
   created_by: string;
   created_at: Date;
+}
+
+interface TraceHistoryRow extends QueryResultRow {
+  tenant_id: string;
+  instance_id: string;
+  revision: string | number;
+  event_id: string;
+  transition_name: string;
+  prior_state: string;
+  new_state: string;
+  data_json: JsonValue;
+  created_at: Date;
+  machine_type: string;
+}
+
+interface TraceAttemptRow extends QueryResultRow {
+  effect_id: string;
+  attempt_number: number;
+  status: string;
+  response_status: number | null;
+  outcome_json: JsonValue | null;
+  created_at: Date;
+  total_count: string;
 }
 
 interface EffectRequestIdentity {
@@ -365,6 +395,9 @@ export class ProductionKernel {
           );
           return response;
         },
+        envelope.operation.op === "explain"
+          ? "REPEATABLE READ"
+          : "READ COMMITTED",
       );
       this.metrics.increment("agentic_intents_total", {
         operation: envelope.operation.op,
@@ -411,6 +444,25 @@ export class ProductionKernel {
     requireScope(principal, "data:read");
     return this.database.withTenantTransaction(principal, (client) =>
       this.resolve(client, operation),
+    );
+  }
+
+  public async explainReadOnly(
+    principal: AuthenticatedPrincipal,
+    target: LineageEndpoint,
+    maxDepth = 4,
+  ): Promise<TraceExplanation> {
+    requireScope(principal, "data:read");
+    return this.database.withTenantTransaction(
+      principal,
+      (client) =>
+        this.explainTrace(
+          client,
+          principal.tenantId,
+          target,
+          maxDepth,
+        ),
+      "REPEATABLE READ",
     );
   }
 
@@ -565,6 +617,13 @@ export class ProductionKernel {
         return this.requestEffect(client, principal, operation);
       case "add_lineage":
         return this.addLineage(client, principal, operation);
+      case "explain":
+        return this.explainTrace(
+          client,
+          principal.tenantId,
+          operation.target,
+          operation.maxDepth ?? 4,
+        );
       case "record_effect_outcome":
         throw new KernelError(
           "unauthorized",
@@ -1235,6 +1294,362 @@ export class ProductionKernel {
     operation: Extract<AgentOperation, { op: "add_lineage" }>,
   ): Promise<LineageEdgeRecord> {
     return this.insertLineage(client, principal, operation);
+  }
+
+  private async explainTrace(
+    client: PoolClient,
+    tenantId: string,
+    root: LineageEndpoint,
+    requestedDepth: number,
+  ): Promise<TraceExplanation> {
+    const maxDepth = normalizeTraceDepth(requestedDepth);
+    let frontier: LineageEndpoint[] = [root];
+    const queued = new Set([traceEndpointKey(root)]);
+    const includedEdges = new Map<string, LineageEdgeRecord>();
+    const nodes: TraceNode[] = [];
+    let truncated = false;
+
+    for (let depth = 0; depth <= maxDepth && frontier.length > 0; depth += 1) {
+      const loaded = await this.loadTraceNodes(
+        client,
+        tenantId,
+        frontier,
+        depth,
+      );
+      nodes.push(...loaded.nodes);
+      if (loaded.truncated) {
+        truncated = true;
+      }
+      if (depth >= maxDepth || includedEdges.size >= 2_000) {
+        if (includedEdges.size >= 2_000) {
+          truncated = true;
+        }
+        continue;
+      }
+      const edgeResult = await this.lineageForEndpoints(
+        client,
+        tenantId,
+        frontier,
+      );
+      if (edgeResult.truncated) {
+        truncated = true;
+      }
+      const nextFrontier: LineageEndpoint[] = [];
+      for (const edge of edgeResult.edges) {
+        if (includedEdges.has(edge.edgeId)) {
+          continue;
+        }
+        if (includedEdges.size >= 2_000) {
+          truncated = true;
+          break;
+        }
+        const newNeighbors = [edge.from, edge.to].filter(
+          (neighbor) => !queued.has(traceEndpointKey(neighbor)),
+        );
+        if (queued.size + newNeighbors.length > 500) {
+          truncated = true;
+          continue;
+        }
+        includedEdges.set(edge.edgeId, edge);
+        for (const neighbor of newNeighbors) {
+          const key = traceEndpointKey(neighbor);
+          queued.add(key);
+          nextFrontier.push(neighbor);
+        }
+      }
+      frontier = nextFrontier;
+    }
+
+    return {
+      root,
+      maxDepth,
+      truncated,
+      nodes: nodes.sort(
+        (left, right) =>
+          left.depth - right.depth ||
+          traceEndpointKey(left.ref).localeCompare(
+            traceEndpointKey(right.ref),
+          ),
+      ),
+      edges: [...includedEdges.values()].sort((left, right) =>
+        left.edgeId.localeCompare(right.edgeId),
+      ),
+    };
+  }
+
+  private async lineageForEndpoints(
+    client: PoolClient,
+    tenantId: string,
+    endpoints: LineageEndpoint[],
+  ): Promise<{
+    edges: LineageEdgeRecord[];
+    truncated: boolean;
+  }> {
+    const artifactIds = endpoints.flatMap((endpoint) =>
+      endpoint.type === "artifact" ? [endpoint.artifactId] : [],
+    );
+    const assertionIds = endpoints.flatMap((endpoint) =>
+      endpoint.type === "assertion" ? [endpoint.assertionId] : [],
+    );
+    const effectIds = endpoints.flatMap((endpoint) =>
+      endpoint.type === "effect" ? [endpoint.effectId] : [],
+    );
+    const workflowIds = endpoints.flatMap((endpoint) =>
+      endpoint.type === "workflow_revision" ? [endpoint.instanceId] : [],
+    );
+    const workflowRevisions = endpoints.flatMap((endpoint) =>
+      endpoint.type === "workflow_revision" ? [endpoint.revision] : [],
+    );
+    const result = await client.query<LineageRow>(
+      `SELECT * FROM agentic.lineage_edges
+       WHERE tenant_id = $1
+         AND (
+           from_artifact_id = ANY($2::TEXT[])
+           OR to_artifact_id = ANY($2::TEXT[])
+           OR from_assertion_id = ANY($3::TEXT[])
+           OR to_assertion_id = ANY($3::TEXT[])
+           OR from_effect_id = ANY($4::TEXT[])
+           OR to_effect_id = ANY($4::TEXT[])
+           OR EXISTS (
+             SELECT 1
+             FROM unnest($5::TEXT[], $6::BIGINT[])
+               AS requested(instance_id, revision)
+             WHERE (
+               lineage_edges.from_instance_id = requested.instance_id
+               AND lineage_edges.from_revision = requested.revision
+             )
+             OR (
+               lineage_edges.to_instance_id = requested.instance_id
+               AND lineage_edges.to_revision = requested.revision
+             )
+           )
+         )
+       ORDER BY created_at, edge_id
+       LIMIT 2001`,
+      [
+        tenantId,
+        artifactIds,
+        assertionIds,
+        effectIds,
+        workflowIds,
+        workflowRevisions,
+      ],
+    );
+    return {
+      edges: result.rows.slice(0, 2_000).map(mapLineage),
+      truncated: result.rows.length > 2_000,
+    };
+  }
+
+  private async loadTraceNodes(
+    client: PoolClient,
+    tenantId: string,
+    refs: LineageEndpoint[],
+    depth: number,
+  ): Promise<{ nodes: TraceNode[]; truncated: boolean }> {
+    const artifactRefs = refs.filter(
+      (ref): ref is Extract<LineageEndpoint, { type: "artifact" }> =>
+        ref.type === "artifact",
+    );
+    const assertionRefs = refs.filter(
+      (ref): ref is Extract<LineageEndpoint, { type: "assertion" }> =>
+        ref.type === "assertion",
+    );
+    const workflowRefs = refs.filter(
+      (
+        ref,
+      ): ref is Extract<LineageEndpoint, { type: "workflow_revision" }> =>
+        ref.type === "workflow_revision",
+    );
+    const effectRefs = refs.filter(
+      (ref): ref is Extract<LineageEndpoint, { type: "effect" }> =>
+        ref.type === "effect",
+    );
+    const nodes = new Map<string, TraceNode>();
+    let truncated = false;
+
+    if (artifactRefs.length > 0) {
+      const result = await client.query<ArtifactRow>(
+        `SELECT * FROM agentic.artifacts
+         WHERE tenant_id = $1 AND artifact_id = ANY($2::TEXT[])`,
+        [tenantId, artifactRefs.map((ref) => ref.artifactId)],
+      );
+      for (const row of result.rows) {
+        const ref: LineageEndpoint = {
+          type: "artifact",
+          artifactId: row.artifact_id,
+        };
+        nodes.set(traceEndpointKey(ref), {
+          ref,
+          depth,
+          label: `Artifact from ${row.source_identity}`,
+          record: artifactMetadata(row),
+        });
+      }
+    }
+
+    if (assertionRefs.length > 0) {
+      const result = await client.query<AssertionRow>(
+        `SELECT * FROM agentic.assertions
+         WHERE tenant_id = $1 AND assertion_id = ANY($2::TEXT[])`,
+        [tenantId, assertionRefs.map((ref) => ref.assertionId)],
+      );
+      for (const row of result.rows) {
+        const assertion = mapAssertion(row);
+        const ref: LineageEndpoint = {
+          type: "assertion",
+          assertionId: assertion.assertionId,
+        };
+        nodes.set(traceEndpointKey(ref), {
+          ref,
+          depth,
+          label:
+            `${assertion.kind} ${assertion.predicate} = ` +
+            typedValueText(assertion.object),
+          record: summarizeTraceJson(toJsonValue(assertion)),
+        });
+      }
+    }
+
+    if (workflowRefs.length > 0) {
+      const result = await client.query<TraceHistoryRow>(
+        `SELECT history.*, machine.machine_type
+         FROM agentic.machine_history history
+         JOIN agentic.machine_instances machine
+           ON machine.tenant_id = history.tenant_id
+          AND machine.instance_id = history.instance_id
+         JOIN unnest($2::TEXT[], $3::BIGINT[])
+           AS requested(instance_id, revision)
+           ON requested.instance_id = history.instance_id
+          AND requested.revision = history.revision
+         WHERE history.tenant_id = $1`,
+        [
+          tenantId,
+          workflowRefs.map((ref) => ref.instanceId),
+          workflowRefs.map((ref) => ref.revision),
+        ],
+      );
+      for (const row of result.rows) {
+        const ref: LineageEndpoint = {
+          type: "workflow_revision",
+          instanceId: row.instance_id,
+          revision: Number(row.revision),
+        };
+        nodes.set(traceEndpointKey(ref), {
+          ref,
+          depth,
+          label:
+            `${row.machine_type} ${row.transition_name}: ` +
+            `${row.prior_state} -> ${row.new_state}`,
+          record: summarizeTraceJson({
+            instanceId: row.instance_id,
+            revision: Number(row.revision),
+            eventId: row.event_id,
+            workflowType: row.machine_type,
+            transitionName: row.transition_name,
+            priorState: row.prior_state,
+            newState: row.new_state,
+            data: row.data_json,
+            createdAt: row.created_at.toISOString(),
+          }),
+        });
+      }
+    }
+
+    if (effectRefs.length > 0) {
+      const effectIds = effectRefs.map((ref) => ref.effectId);
+      const effects = await client.query<EffectRow>(
+        `SELECT * FROM agentic.effect_intents
+         WHERE tenant_id = $1 AND effect_id = ANY($2::TEXT[])`,
+        [tenantId, effectIds],
+      );
+      const attempts = await client.query<TraceAttemptRow>(
+        `WITH ranked AS (
+           SELECT
+             effect_id,
+             attempt_number,
+             status,
+             response_status,
+             outcome_json,
+             created_at,
+             count(*) OVER (PARTITION BY effect_id)::TEXT AS total_count,
+             row_number() OVER (
+               PARTITION BY effect_id ORDER BY attempt_number
+             ) AS first_rank,
+             row_number() OVER (
+               PARTITION BY effect_id ORDER BY attempt_number DESC
+             ) AS last_rank
+           FROM agentic.effect_attempts
+           WHERE tenant_id = $1 AND effect_id = ANY($2::TEXT[])
+         )
+         SELECT
+           effect_id,
+           attempt_number,
+           status,
+           response_status,
+           outcome_json,
+           created_at,
+           total_count
+         FROM ranked
+         WHERE first_rank <= 10 OR last_rank <= 10
+         ORDER BY effect_id, attempt_number`,
+        [tenantId, effectIds],
+      );
+      const attemptsByEffect = new Map<string, TraceAttemptRow[]>();
+      for (const attempt of attempts.rows) {
+        const values = attemptsByEffect.get(attempt.effect_id) ?? [];
+        values.push(attempt);
+        attemptsByEffect.set(attempt.effect_id, values);
+      }
+      for (const row of effects.rows) {
+        const effect = mapEffect(row);
+        const effectAttempts = attemptsByEffect.get(effect.effectId) ?? [];
+        const attemptCount = Number(
+          effectAttempts[0]?.total_count ?? "0",
+        );
+        if (attemptCount > effectAttempts.length) {
+          truncated = true;
+        }
+        const ref: LineageEndpoint = {
+          type: "effect",
+          effectId: effect.effectId,
+        };
+        nodes.set(traceEndpointKey(ref), {
+          ref,
+          depth,
+          label: `${effect.effectType} effect ${effect.status}`,
+          record: {
+            effect: summarizeTraceJson(toJsonValue(effect), 4_000),
+            attemptCount,
+            attemptsTruncated: attemptCount > effectAttempts.length,
+            attempts: effectAttempts.map((attempt) => ({
+              attemptNumber: attempt.attempt_number,
+              status: attempt.status,
+              responseStatus: attempt.response_status,
+              outcome:
+                attempt.outcome_json === null
+                  ? null
+                  : summarizeTraceJson(attempt.outcome_json, 1_000),
+              createdAt: attempt.created_at.toISOString(),
+            })),
+          },
+        });
+      }
+    }
+
+    return {
+      nodes: refs.map((ref) => {
+        const node = nodes.get(traceEndpointKey(ref));
+        if (!node) {
+          throw new KernelError(
+            "not_found",
+            `Trace node ${traceEndpointKey(ref)} was not found`,
+          );
+        }
+        return node;
+      }),
+      truncated,
+    };
   }
 
   private async seedInventory(
