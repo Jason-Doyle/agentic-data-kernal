@@ -33,6 +33,38 @@ export class SqliteStore {
         "ALTER TABLE idempotency_results ADD COLUMN request_hash TEXT NOT NULL DEFAULT ''",
       );
     }
+    this.ensureColumn(
+      "machine_instances",
+      "terminal",
+      "ALTER TABLE machine_instances ADD COLUMN terminal INTEGER NOT NULL DEFAULT 0 CHECK (terminal IN (0, 1))",
+    );
+    this.database.exec(
+      `UPDATE machine_instances
+       SET terminal = 1
+       WHERE machine_type = 'retail_order'
+         AND state IN ('confirmed', 'cancelled', 'failed')`,
+    );
+    this.ensureColumn(
+      "effect_intents",
+      "outcome_handler",
+      "ALTER TABLE effect_intents ADD COLUMN outcome_handler TEXT NOT NULL DEFAULT 'retail_order_payment' CHECK (outcome_handler IN ('retail_order_payment', 'none'))",
+    );
+    this.ensureColumn(
+      "effect_intents",
+      "status_url",
+      "ALTER TABLE effect_intents ADD COLUMN status_url TEXT",
+    );
+    this.ensureColumn(
+      "effect_intents",
+      "decision_assertion_id",
+      "ALTER TABLE effect_intents ADD COLUMN decision_assertion_id TEXT",
+    );
+    this.ensureColumn(
+      "effect_intents",
+      "policy_assertion_id",
+      "ALTER TABLE effect_intents ADD COLUMN policy_assertion_id TEXT",
+    );
+    this.ensureEffectIntentForeignKeys();
     this.initializeLogicalClock();
   }
 
@@ -129,6 +161,143 @@ export class SqliteStore {
 
   public close(): void {
     this.database.close();
+  }
+
+  private ensureColumn(
+    table: string,
+    column: string,
+    statement: string,
+  ): void {
+    const columns = this.database
+      .prepare(`PRAGMA table_info(${table})`)
+      .all() as Array<{ name: string }>;
+    if (!columns.some((candidate) => candidate.name === column)) {
+      this.database.exec(statement);
+    }
+  }
+
+  private ensureEffectIntentForeignKeys(): void {
+    const foreignKeys = this.database
+      .prepare("PRAGMA foreign_key_list(effect_intents)")
+      .all() as Array<{ table: string }>;
+    const assertionReferences = foreignKeys.filter(
+      (foreignKey) => foreignKey.table === "assertions",
+    ).length;
+    if (
+      foreignKeys.some(
+        (foreignKey) => foreignKey.table === "machine_history",
+      ) &&
+      assertionReferences >= 2
+    ) {
+      return;
+    }
+
+    const invalid = this.database
+      .prepare(
+        `SELECT effect.effect_id
+         FROM effect_intents effect
+         LEFT JOIN machine_history history
+           ON history.tenant_id = effect.tenant_id
+          AND history.instance_id = effect.instance_id
+          AND history.revision = effect.originating_revision
+         LEFT JOIN assertions decision
+           ON decision.tenant_id = effect.tenant_id
+          AND decision.assertion_id = effect.decision_assertion_id
+         LEFT JOIN assertions policy
+           ON policy.tenant_id = effect.tenant_id
+          AND policy.assertion_id = effect.policy_assertion_id
+         WHERE history.instance_id IS NULL
+            OR (
+              effect.decision_assertion_id IS NOT NULL
+              AND decision.assertion_id IS NULL
+            )
+            OR (
+              effect.policy_assertion_id IS NOT NULL
+              AND policy.assertion_id IS NULL
+            )
+         LIMIT 1`,
+      )
+      .get();
+    if (invalid) {
+      throw new Error(
+        "Existing effect intents violate generic agency foreign keys",
+      );
+    }
+
+    this.database.exec("PRAGMA foreign_keys = OFF");
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.exec(`
+        DROP TABLE IF EXISTS effect_intents_rebuild;
+        CREATE TABLE effect_intents_rebuild (
+          tenant_id TEXT NOT NULL,
+          effect_id TEXT NOT NULL,
+          instance_id TEXT NOT NULL,
+          originating_revision INTEGER NOT NULL,
+          effect_name TEXT NOT NULL,
+          effect_type TEXT NOT NULL,
+          outcome_handler TEXT NOT NULL DEFAULT 'retail_order_payment' CHECK (
+            outcome_handler IN ('retail_order_payment', 'none')
+          ),
+          target TEXT NOT NULL,
+          status_url TEXT,
+          request_json TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL,
+          decision_assertion_id TEXT,
+          policy_assertion_id TEXT,
+          status TEXT NOT NULL CHECK (
+            status IN ('planned', 'unknown', 'succeeded', 'failed', 'cancelled')
+          ),
+          attempt_count INTEGER NOT NULL,
+          outcome_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, effect_id),
+          UNIQUE (
+            tenant_id,
+            instance_id,
+            originating_revision,
+            effect_name
+          ),
+          FOREIGN KEY (tenant_id, instance_id)
+            REFERENCES machine_instances (tenant_id, instance_id),
+          FOREIGN KEY (tenant_id, instance_id, originating_revision)
+            REFERENCES machine_history (tenant_id, instance_id, revision),
+          FOREIGN KEY (tenant_id, decision_assertion_id)
+            REFERENCES assertions (tenant_id, assertion_id),
+          FOREIGN KEY (tenant_id, policy_assertion_id)
+            REFERENCES assertions (tenant_id, assertion_id)
+        ) STRICT;
+        INSERT INTO effect_intents_rebuild (
+          tenant_id, effect_id, instance_id, originating_revision,
+          effect_name, effect_type, outcome_handler, target, status_url,
+          request_json, idempotency_key, decision_assertion_id,
+          policy_assertion_id, status, attempt_count, outcome_json,
+          created_at, updated_at
+        )
+        SELECT
+          tenant_id, effect_id, instance_id, originating_revision,
+          effect_name, effect_type, outcome_handler, target, status_url,
+          request_json, idempotency_key, decision_assertion_id,
+          policy_assertion_id, status, attempt_count, outcome_json,
+          created_at, updated_at
+        FROM effect_intents;
+        DROP TABLE effect_intents;
+        ALTER TABLE effect_intents_rebuild RENAME TO effect_intents;
+      `);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    } finally {
+      this.database.exec("PRAGMA foreign_keys = ON");
+    }
+    const violations = this.database
+      .prepare("PRAGMA foreign_key_check")
+      .all();
+    if (violations.length > 0) {
+      throw new Error("SQLite foreign key validation failed after upgrade");
+    }
   }
 
   private initializeLogicalClock(): void {

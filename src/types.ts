@@ -200,6 +200,19 @@ export interface MachineRecord {
   state: MachineState;
   data: OrderData;
   revision: number;
+  terminal?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowRecord {
+  tenantId: string;
+  instanceId: string;
+  machineType: string;
+  state: string;
+  data: JsonValue;
+  revision: number;
+  terminal: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -220,14 +233,86 @@ export interface EffectRecord {
   originatingRevision: number;
   effectName: string;
   effectType: string;
+  outcomeHandler?: "retail_order_payment" | "none";
   target: string;
+  statusUrl?: string | null;
   request: JsonValue;
   idempotencyKey: string;
+  decisionAssertionId?: string | null;
+  policyAssertionId?: string | null;
   status: EffectStatus;
   attemptCount: number;
   outcome: JsonValue | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type LineageRelation =
+  | "evidence_for"
+  | "supports"
+  | "contradicts"
+  | "governs"
+  | "authorizes"
+  | "produces"
+  | "verifies";
+
+export type LineageEndpoint =
+  | { type: "artifact"; artifactId: string }
+  | { type: "assertion"; assertionId: string }
+  | {
+      type: "workflow_revision";
+      instanceId: string;
+      revision: number;
+    }
+  | { type: "effect"; effectId: string };
+
+export interface LineageEdgeRecord {
+  tenantId: string;
+  edgeId: string;
+  relation: LineageRelation;
+  from: LineageEndpoint;
+  to: LineageEndpoint;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface CreateWorkflowInput {
+  instanceId: string;
+  workflowType: string;
+  initialState: string;
+  data: JsonValue;
+}
+
+export interface AdvanceWorkflowInput {
+  instanceId: string;
+  expectedRevision: number;
+  expectedState: string;
+  transitionName: string;
+  toState: string;
+  data: JsonValue;
+  terminal?: boolean;
+}
+
+export interface GenericEffectRequestInput {
+  instanceId: string;
+  expectedRevision: number;
+  effectName: string;
+  effectType: string;
+  target: string;
+  statusUrl?: string;
+  request: JsonValue;
+  idempotencyKey: string;
+  decisionAssertionId: string;
+  policyAssertionId: string;
+  budgetAmount?: string;
+  currency?: string;
+}
+
+export interface EffectOutcomeInput {
+  effectId: string;
+  idempotencyKey: string;
+  status: "succeeded" | "failed" | "unknown";
+  outcome?: JsonValue;
 }
 
 export interface ExecutionReceipt {

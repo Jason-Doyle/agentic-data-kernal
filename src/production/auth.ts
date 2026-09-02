@@ -192,15 +192,20 @@ export function operationScope(operation: string): string {
     case "put_entity":
     case "put_artifact":
     case "assert":
+    case "add_lineage":
       return "data:write";
     case "seed_inventory":
       return "inventory:admin";
     case "reserve_inventory":
       return "orders:write";
     case "request_payment":
+    case "request_effect":
       return "effects:write";
     case "record_payment_outcome":
+    case "record_effect_outcome":
       return "effects:reconcile";
+    case "create_workflow":
+    case "advance_workflow":
     case "process_timers":
       return "workflows:run";
     default:

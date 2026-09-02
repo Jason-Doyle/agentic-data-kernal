@@ -18,6 +18,9 @@ import type {
   EpistemicKind,
   InventoryRecord,
   JsonValue,
+  LineageEdgeRecord,
+  LineageEndpoint,
+  LineageRelation,
   MachineRecord,
   MachineState,
   OrderData,
@@ -26,6 +29,7 @@ import type {
   SearchHit,
   Strength,
   TypedValue,
+  WorkflowRecord,
 } from "../types.js";
 import {
   normalizeIsoTimestamp,
@@ -112,6 +116,19 @@ interface MachineRow extends QueryResultRow {
   state: string;
   data_json: OrderData;
   revision: string | number;
+  terminal: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface WorkflowRow extends QueryResultRow {
+  tenant_id: string;
+  instance_id: string;
+  machine_type: string;
+  state: string;
+  data_json: JsonValue;
+  revision: string | number;
+  terminal: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -123,15 +140,55 @@ interface EffectRow extends QueryResultRow {
   originating_revision: string | number;
   effect_name: string;
   effect_type: string;
+  outcome_handler: string;
   target_url: string;
   status_url: string;
   request_json: JsonValue;
   idempotency_key: string;
+  decision_assertion_id: string | null;
+  policy_assertion_id: string | null;
+  provider_namespace: string;
+  request_hash: string;
+  authorizing_key_id: string;
+  budget_amount: string;
+  currency: string;
   status: string;
   attempt_count: number;
   outcome_json: JsonValue | null;
   created_at: Date;
   updated_at: Date;
+}
+
+interface LineageRow extends QueryResultRow {
+  tenant_id: string;
+  edge_id: string;
+  relation: string;
+  from_artifact_id: string | null;
+  from_assertion_id: string | null;
+  from_instance_id: string | null;
+  from_revision: string | number | null;
+  from_effect_id: string | null;
+  to_artifact_id: string | null;
+  to_assertion_id: string | null;
+  to_instance_id: string | null;
+  to_revision: string | number | null;
+  to_effect_id: string | null;
+  created_by: string;
+  created_at: Date;
+}
+
+interface EffectRequestIdentity {
+  instanceId: string;
+  originatingRevision?: number;
+  effectName: string;
+  effectType: string;
+  target: string;
+  statusUrl: string;
+  request: JsonValue;
+  amount: string;
+  currency: string;
+  decisionAssertionId: string | null;
+  policyAssertionId: string | null;
 }
 
 interface IdempotencyRow extends QueryResultRow {
@@ -179,10 +236,13 @@ export class ProductionKernel {
   ): Promise<IntentExecutionResult> {
     const envelope = parseIntentEnvelope(input);
     verifyEnvelopePrincipal(principal, envelope.principal);
-    if (envelope.operation.op === "record_payment_outcome") {
+    if (
+      envelope.operation.op === "record_payment_outcome" ||
+      envelope.operation.op === "record_effect_outcome"
+    ) {
       throw new KernelError(
         "unauthorized",
-        "Payment outcomes are accepted only from the effect worker",
+        "Effect outcomes are accepted only from the effect worker",
       );
     }
     requireScope(principal, operationScope(envelope.operation.op));
@@ -357,10 +417,10 @@ export class ProductionKernel {
   public async getMachineReadOnly(
     principal: AuthenticatedPrincipal,
     instanceId: string,
-  ): Promise<MachineRecord> {
+  ): Promise<MachineRecord | WorkflowRecord> {
     requireScope(principal, "data:read");
     return this.database.withTenantTransaction(principal, (client) =>
-      this.getMachine(client, principal.tenantId, instanceId),
+      this.getMachineRecord(client, principal.tenantId, instanceId),
     );
   }
 
@@ -497,6 +557,19 @@ export class ProductionKernel {
           throw new Error("Search embedding was not prepared");
         }
         return this.search(client, operation, searchEmbedding);
+      case "create_workflow":
+        return this.createWorkflow(client, principal, operation);
+      case "advance_workflow":
+        return this.advanceWorkflow(client, principal, operation);
+      case "request_effect":
+        return this.requestEffect(client, principal, operation);
+      case "add_lineage":
+        return this.addLineage(client, principal, operation);
+      case "record_effect_outcome":
+        throw new KernelError(
+          "unauthorized",
+          "Effect outcomes are accepted only from the effect worker",
+        );
       case "seed_inventory":
         return this.seedInventory(client, principal, operation);
       case "reserve_inventory":
@@ -506,11 +579,17 @@ export class ProductionKernel {
       case "record_payment_outcome":
         return this.recordPaymentOutcome(client, principal, operation);
       case "get_machine":
-        return this.getMachine(client, principal.tenantId, operation.instanceId);
+        return this.getMachineRecord(
+          client,
+          principal.tenantId,
+          operation.instanceId,
+        );
       case "list_effects":
         return this.listEffects(client, principal.tenantId, operation.instanceId);
       case "process_timers":
         return this.processTimers(client, principal, operation.asOf);
+      default:
+        return assertNever(operation);
     }
   }
 
@@ -724,7 +803,7 @@ export class ProductionKernel {
         input.authority ?? 50,
         input.status ?? "active",
         input.sourceArtifactId ?? null,
-        input.basis ?? null,
+        input.basis === undefined ? null : stableStringify(input.basis),
         input.supersedesAssertionId ?? null,
         prepared.persistedSearchText,
         vectorToSql(prepared.embedding),
@@ -733,9 +812,18 @@ export class ProductionKernel {
         principal.principalId,
       ],
     );
-    return mapAssertion(
-      requiredRow(result.rows[0], "Assertion was not persisted"),
-    );
+    const row = requiredRow(result.rows[0], "Assertion was not persisted");
+    if (input.sourceArtifactId) {
+      await this.insertLineage(client, principal, {
+        relation: "evidence_for",
+        from: {
+          type: "artifact",
+          artifactId: input.sourceArtifactId,
+        },
+        to: { type: "assertion", assertionId },
+      });
+    }
+    return mapAssertion(row);
   }
 
   private async resolve(
@@ -836,6 +924,317 @@ export class ProductionKernel {
       combinedScore: roundScore(row.combined_score),
       graphDistance: row.graph_distance,
     }));
+  }
+
+  private async createWorkflow(
+    client: PoolClient,
+    principal: AuthenticatedPrincipal,
+    operation: Extract<AgentOperation, { op: "create_workflow" }>,
+  ): Promise<WorkflowRecord> {
+    if (operation.workflowType === "retail_order") {
+      throw new KernelError(
+        "invalid_input",
+        "retail_order is reserved for the retail workflow",
+      );
+    }
+    if (operation.instanceId.startsWith("order:")) {
+      throw new KernelError(
+        "invalid_input",
+        "The order: identifier namespace is reserved for retail workflows",
+      );
+    }
+    const time = await nextSystemTime(client);
+    const result = await client.query<WorkflowRow>(
+      `INSERT INTO agentic.machine_instances (
+         tenant_id, instance_id, machine_type, state, data_json, revision,
+         terminal, created_at, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, 1, FALSE, $6, $6)
+       ON CONFLICT (tenant_id, instance_id) DO NOTHING
+       RETURNING *`,
+      [
+        principal.tenantId,
+        operation.instanceId,
+        operation.workflowType,
+        operation.initialState,
+        stableStringify(operation.data),
+        time,
+      ],
+    );
+    const created = result.rows[0];
+    if (!created) {
+      throw new KernelError(
+        "conflict",
+        `Workflow ${operation.instanceId} already exists`,
+      );
+    }
+    await this.appendHistory(
+      client,
+      principal.tenantId,
+      operation.instanceId,
+      1,
+      "create_workflow",
+      "uninitialized",
+      operation.initialState,
+      operation.data,
+      time,
+    );
+    return mapWorkflow(created);
+  }
+
+  private async advanceWorkflow(
+    client: PoolClient,
+    principal: AuthenticatedPrincipal,
+    operation: Extract<AgentOperation, { op: "advance_workflow" }>,
+  ): Promise<WorkflowRecord> {
+    const workflow = await this.getWorkflow(
+      client,
+      principal.tenantId,
+      operation.instanceId,
+      true,
+    );
+    if (workflow.terminal) {
+      throw new KernelError(
+        "conflict",
+        `Workflow ${workflow.instanceId} is terminal`,
+      );
+    }
+    if (
+      workflow.revision !== operation.expectedRevision ||
+      workflow.state !== operation.expectedState
+    ) {
+      throw new KernelError(
+        "conflict",
+        `Workflow ${workflow.instanceId} changed before ${operation.transitionName}`,
+      );
+    }
+    const nextRevision = workflow.revision + 1;
+    const time = await nextSystemTime(client);
+    const result = await client.query<WorkflowRow>(
+      `UPDATE agentic.machine_instances
+       SET state = $1, data_json = $2, revision = $3, terminal = $4,
+           updated_at = $5
+       WHERE tenant_id = $6 AND instance_id = $7
+         AND revision = $8 AND state = $9
+         AND terminal = FALSE AND machine_type <> 'retail_order'
+       RETURNING *`,
+      [
+        operation.toState,
+        stableStringify(operation.data),
+        nextRevision,
+        operation.terminal ?? false,
+        time,
+        principal.tenantId,
+        workflow.instanceId,
+        operation.expectedRevision,
+        operation.expectedState,
+      ],
+    );
+    const updated = requiredRow(
+      result.rows[0],
+      "Workflow transition was not committed",
+    );
+    await this.appendHistory(
+      client,
+      principal.tenantId,
+      workflow.instanceId,
+      nextRevision,
+      operation.transitionName,
+      workflow.state,
+      operation.toState,
+      operation.data,
+      time,
+    );
+    return mapWorkflow(updated);
+  }
+
+  private async requestEffect(
+    client: PoolClient,
+    principal: AuthenticatedPrincipal,
+    operation: Extract<AgentOperation, { op: "request_effect" }>,
+  ): Promise<EffectRecord> {
+    validateEffectTarget(operation.target, this.config.effectAllowedHosts);
+    if (!operation.statusUrl) {
+      throw new KernelError(
+        "invalid_input",
+        "statusUrl is required in the production profile",
+      );
+    }
+    validateEffectTarget(operation.statusUrl, this.config.effectAllowedHosts);
+    const keyResult = await client.query<{ effect_budget_currency: string }>(
+      `SELECT effect_budget_currency
+       FROM agentic_auth.api_keys
+       WHERE key_id = $1 AND tenant_id = $2`,
+      [principal.keyId, principal.tenantId],
+    );
+    const keyCurrency = requiredRow(
+      keyResult.rows[0],
+      "Effect authorization key was not found",
+    ).effect_budget_currency;
+    const amount = operation.budgetAmount ?? "0";
+    const currency = operation.currency ?? keyCurrency;
+    const providerNamespace = effectProviderNamespace(operation.target);
+    const requestIdentity: EffectRequestIdentity = {
+      instanceId: operation.instanceId,
+      originatingRevision: operation.expectedRevision,
+      effectName: operation.effectName,
+      effectType: operation.effectType,
+      target: operation.target,
+      statusUrl: operation.statusUrl,
+      request: operation.request,
+      amount,
+      currency,
+      decisionAssertionId: operation.decisionAssertionId,
+      policyAssertionId: operation.policyAssertionId,
+    };
+    const requestHash = effectRequestHash(principal, requestIdentity);
+    const replay = await this.lockEffectIdempotency(
+      client,
+      principal,
+      providerNamespace,
+      operation.idempotencyKey,
+      requestIdentity,
+      requestHash,
+    );
+    if (replay) {
+      return mapEffect(replay);
+    }
+    const workflow = await this.getWorkflow(
+      client,
+      principal.tenantId,
+      operation.instanceId,
+      true,
+    );
+    if (workflow.terminal) {
+      throw new KernelError(
+        "conflict",
+        `Workflow ${workflow.instanceId} is terminal`,
+      );
+    }
+    if (workflow.revision !== operation.expectedRevision) {
+      throw new KernelError(
+        "conflict",
+        `Workflow ${workflow.instanceId} revision changed`,
+      );
+    }
+    const time = await nextSystemTime(client);
+    await this.requireCurrentAssertionKind(
+      client,
+      principal.tenantId,
+      operation.decisionAssertionId,
+      "decision",
+      time,
+    );
+    await this.requireCurrentAssertionKind(
+      client,
+      principal.tenantId,
+      operation.policyAssertionId,
+      "directive",
+      time,
+    );
+    const budget = await client.query(
+      `UPDATE agentic_auth.api_keys
+       SET effect_budget_reserved = effect_budget_reserved + $1
+       WHERE key_id = $2
+         AND tenant_id = $3
+         AND revoked_at IS NULL
+         AND (expires_at IS NULL OR expires_at > clock_timestamp())
+         AND ('*' = ANY(purposes) OR $4 = ANY(purposes))
+         AND effect_budget_spent + effect_budget_reserved + $1
+           <= effect_budget_limit
+         AND effect_budget_currency = $5`,
+      [
+        amount,
+        principal.keyId,
+        principal.tenantId,
+        principal.purpose,
+        currency,
+      ],
+    );
+    if (budget.rowCount !== 1) {
+      throw new KernelError(
+        "unauthorized",
+        "Effect authorization expired, was revoked, or exceeded its budget",
+      );
+    }
+    const effectId = deterministicId(
+      "effect",
+      principal.tenantId,
+      workflow.instanceId,
+      String(workflow.revision),
+      operation.effectName,
+    );
+    const result = await client.query<EffectRow>(
+      `INSERT INTO agentic.effect_intents (
+         tenant_id, effect_id, instance_id, originating_revision,
+         effect_name, effect_type, outcome_handler, target_url, status_url,
+         request_json, idempotency_key, authorizing_key_id, purpose,
+         budget_amount, currency, decision_assertion_id,
+         policy_assertion_id, provider_namespace, request_hash,
+         status, attempt_count, updated_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, 'none', $7, $8, $9, $10, $11, $12,
+         $13, $14, $15, $16, $17, $18, 'planned', 0, $19
+       )
+       RETURNING *`,
+      [
+        principal.tenantId,
+        effectId,
+        workflow.instanceId,
+        workflow.revision,
+        operation.effectName,
+        operation.effectType,
+        operation.target,
+        operation.statusUrl,
+        stableStringify(operation.request),
+        operation.idempotencyKey,
+        principal.keyId,
+        principal.purpose,
+        amount,
+        currency,
+        operation.decisionAssertionId,
+        operation.policyAssertionId,
+        providerNamespace,
+        requestHash,
+        time,
+      ],
+    );
+    const effectEndpoint: LineageEndpoint = { type: "effect", effectId };
+    await this.insertLineage(client, principal, {
+      relation: "authorizes",
+      from: {
+        type: "assertion",
+        assertionId: operation.decisionAssertionId,
+      },
+      to: effectEndpoint,
+    });
+    await this.insertLineage(client, principal, {
+      relation: "governs",
+      from: {
+        type: "assertion",
+        assertionId: operation.policyAssertionId,
+      },
+      to: effectEndpoint,
+    });
+    await this.insertLineage(client, principal, {
+      relation: "produces",
+      from: {
+        type: "workflow_revision",
+        instanceId: workflow.instanceId,
+        revision: workflow.revision,
+      },
+      to: effectEndpoint,
+    });
+    return mapEffect(
+      requiredRow(result.rows[0], "Effect intent was not persisted"),
+    );
+  }
+
+  private async addLineage(
+    client: PoolClient,
+    principal: AuthenticatedPrincipal,
+    operation: Extract<AgentOperation, { op: "add_lineage" }>,
+  ): Promise<LineageEdgeRecord> {
+    return this.insertLineage(client, principal, operation);
   }
 
   private async seedInventory(
@@ -956,7 +1355,7 @@ export class ProductionKernel {
       "reserve_inventory",
       "new",
       "reserved",
-      data,
+      stableStringify(data),
       time,
     );
     const timerId = deterministicId(
@@ -1016,6 +1415,39 @@ export class ProductionKernel {
     const machine = mapMachine(
       requiredRow(machineResult.rows[0], "Order machine was not found"),
     );
+    const effectName = "capture_payment";
+    const request: JsonValue = {
+      orderId: machine.data.orderId,
+      amount: operation.amount,
+      currency: operation.currency,
+    };
+    const providerNamespace = effectProviderNamespace(
+      operation.paymentTarget,
+    );
+    const requestIdentity: EffectRequestIdentity = {
+      instanceId: machine.instanceId,
+      effectName,
+      effectType: "payment.capture",
+      target: operation.paymentTarget,
+      statusUrl: operation.paymentStatusUrl,
+      request,
+      amount: operation.amount,
+      currency: operation.currency,
+      decisionAssertionId: null,
+      policyAssertionId: null,
+    };
+    const requestHash = effectRequestHash(principal, requestIdentity);
+    const replay = await this.lockEffectIdempotency(
+      client,
+      principal,
+      providerNamespace,
+      operation.idempotencyKey,
+      requestIdentity,
+      requestHash,
+    );
+    if (replay) {
+      return mapEffect(replay);
+    }
     if (machine.state !== "reserved") {
       throw new KernelError(
         "conflict",
@@ -1055,7 +1487,6 @@ export class ProductionKernel {
       );
     }
     const nextRevision = machine.revision + 1;
-    const effectName = "capture_payment";
     const effectId = deterministicId(
       "effect",
       principal.tenantId,
@@ -1063,11 +1494,6 @@ export class ProductionKernel {
       String(nextRevision),
       effectName,
     );
-    const request: JsonValue = {
-      orderId: machine.data.orderId,
-      amount: operation.amount,
-      currency: operation.currency,
-    };
     await client.query(
       `UPDATE agentic.machine_instances
        SET state = 'payment_pending', revision = $1, updated_at = $2
@@ -1094,13 +1520,15 @@ export class ProductionKernel {
     const effectResult = await client.query<EffectRow>(
       `INSERT INTO agentic.effect_intents (
          tenant_id, effect_id, instance_id, originating_revision, effect_name,
-         effect_type, target_url, request_json, idempotency_key,
-         status_url,
+         effect_type, outcome_handler, target_url, request_json,
+         idempotency_key, status_url,
          authorizing_key_id, purpose, budget_amount, currency, status,
-         attempt_count, updated_at
+         decision_assertion_id, policy_assertion_id, provider_namespace,
+         request_hash, attempt_count, updated_at
        ) VALUES (
-         $1, $2, $3, $4, $5, 'payment.capture', $6, $7, $8, $9,
-         $10, $11, $12, $13, 'planned', 0, $14
+         $1, $2, $3, $4, $5, 'payment.capture',
+         'retail_order_payment', $6, $7, $8, $9,
+         $10, $11, $12, $13, 'planned', NULL, NULL, $14, $15, 0, $16
        )
        RETURNING *`,
       [
@@ -1110,13 +1538,15 @@ export class ProductionKernel {
         nextRevision,
         effectName,
         operation.paymentTarget,
-        request,
+        stableStringify(request),
         operation.idempotencyKey,
         operation.paymentStatusUrl,
         principal.keyId,
         principal.purpose,
         operation.amount,
         operation.currency,
+        providerNamespace,
+        requestHash,
         time,
       ],
     );
@@ -1188,7 +1618,9 @@ export class ProductionKernel {
         effectRow.effect_id,
         nextAttempt,
         operation.status,
-        operation.outcome ?? null,
+        operation.outcome === undefined
+          ? null
+          : stableStringify(operation.outcome),
         time,
       ],
     );
@@ -1204,7 +1636,9 @@ export class ProductionKernel {
       [
         operation.status,
         nextAttempt,
-        operation.outcome ?? null,
+        operation.outcome === undefined
+          ? null
+          : stableStringify(operation.outcome),
         time,
         principal.tenantId,
         effectRow.effect_id,
@@ -1244,12 +1678,13 @@ export class ProductionKernel {
     const nextRevision = machine.revision + 1;
     const updated = await client.query<MachineRow>(
       `UPDATE agentic.machine_instances
-       SET state = $1, revision = $2, updated_at = $3
-       WHERE tenant_id = $4 AND instance_id = $5
+       SET state = $1, revision = $2, terminal = $3, updated_at = $4
+       WHERE tenant_id = $5 AND instance_id = $6
        RETURNING *`,
       [
         nextState,
         nextRevision,
+        nextState !== "payment_pending",
         time,
         principal.tenantId,
         machine.instanceId,
@@ -1317,7 +1752,8 @@ export class ProductionKernel {
       const nextRevision = machine.revision + 1;
       const updated = await client.query<MachineRow>(
         `UPDATE agentic.machine_instances
-         SET state = 'cancelled', revision = $1, updated_at = $2
+         SET state = 'cancelled', revision = $1, terminal = TRUE,
+             updated_at = $2
          WHERE tenant_id = $3 AND instance_id = $4
          RETURNING *`,
         [nextRevision, time, principal.tenantId, machine.instanceId],
@@ -1361,6 +1797,44 @@ export class ProductionKernel {
     return mapMachine(requiredRow(result.rows[0], "Machine was not found"));
   }
 
+  private async getMachineRecord(
+    client: PoolClient,
+    tenantId: string,
+    instanceId: string,
+  ): Promise<MachineRecord | WorkflowRecord> {
+    const result = await client.query<WorkflowRow>(
+      `SELECT * FROM agentic.machine_instances
+       WHERE tenant_id = $1 AND instance_id = $2`,
+      [tenantId, instanceId],
+    );
+    const row = requiredRow(result.rows[0], "Machine was not found");
+    return row.machine_type === "retail_order"
+      ? mapMachine(row)
+      : mapWorkflow(row);
+  }
+
+  private async getWorkflow(
+    client: PoolClient,
+    tenantId: string,
+    instanceId: string,
+    forUpdate = false,
+  ): Promise<WorkflowRecord> {
+    const result = await client.query<WorkflowRow>(
+      `SELECT * FROM agentic.machine_instances
+       WHERE tenant_id = $1 AND instance_id = $2
+       ${forUpdate ? "FOR UPDATE" : ""}`,
+      [tenantId, instanceId],
+    );
+    const row = requiredRow(result.rows[0], "Workflow was not found");
+    if (row.machine_type === "retail_order") {
+      throw new KernelError(
+        "conflict",
+        "Generic workflow operations cannot modify retail orders",
+      );
+    }
+    return mapWorkflow(row);
+  }
+
   private async getInventory(
     client: PoolClient,
     tenantId: string,
@@ -1396,15 +1870,257 @@ export class ProductionKernel {
     return result.rows.map(mapEffect);
   }
 
+  private async requireCurrentAssertionKind(
+    client: PoolClient,
+    tenantId: string,
+    assertionId: string,
+    kind: EpistemicKind,
+    time: Date | string,
+  ): Promise<AssertionRow> {
+    const result = await client.query<AssertionRow>(
+      `SELECT * FROM agentic.assertions
+       WHERE tenant_id = $1 AND assertion_id = $2
+         AND kind = $3 AND status = 'active'
+         AND system_from <= $4
+         AND (system_to IS NULL OR system_to > $4)
+         AND valid_from <= $4
+         AND (valid_to IS NULL OR valid_to > $4)`,
+      [tenantId, assertionId, kind, time],
+    );
+    return requiredRow(
+      result.rows[0],
+      `Active ${kind} assertion ${assertionId} was not found`,
+    );
+  }
+
+  private async lockEffectIdempotency(
+    client: PoolClient,
+    principal: AuthenticatedPrincipal,
+    providerNamespace: string,
+    idempotencyKey: string,
+    request: EffectRequestIdentity,
+    requestHash: string,
+  ): Promise<EffectRow | null> {
+    await client.query(
+      `SELECT pg_advisory_xact_lock(
+         hashtext($1),
+         hashtext($2)
+       )`,
+      [principal.tenantId, `${providerNamespace}\n${idempotencyKey}`],
+    );
+    const result = await client.query<EffectRow>(
+      `SELECT *
+       FROM agentic.effect_intents
+       WHERE tenant_id = $1
+         AND provider_namespace = $2
+         AND idempotency_key = $3
+       FOR UPDATE`,
+      [principal.tenantId, providerNamespace, idempotencyKey],
+    );
+    const existing = result.rows[0];
+    if (!existing) {
+      return null;
+    }
+    const legacyReplay =
+      existing.request_hash.startsWith("legacy:") &&
+      legacyEffectRequestMatches(existing, principal, request);
+    if (existing.request_hash !== requestHash && !legacyReplay) {
+      throw new KernelError(
+        "conflict",
+        `Provider idempotency key ${idempotencyKey} was already used for a different effect request`,
+      );
+    }
+    return existing;
+  }
+
+  private async insertLineage(
+    client: PoolClient,
+    principal: AuthenticatedPrincipal,
+    input: {
+      relation: LineageRelation;
+      from: LineageEndpoint;
+      to: LineageEndpoint;
+    },
+  ): Promise<LineageEdgeRecord> {
+    await this.validateLineage(client, principal.tenantId, input);
+    const edgeId = deterministicId(
+      "lineage",
+      principal.tenantId,
+      input.relation,
+      stableStringify(input.from),
+      stableStringify(input.to),
+    );
+    const from = lineageColumns(input.from);
+    const to = lineageColumns(input.to);
+    const result = await client.query<LineageRow>(
+      `INSERT INTO agentic.lineage_edges (
+         tenant_id, edge_id, relation,
+         from_artifact_id, from_assertion_id, from_instance_id,
+         from_revision, from_effect_id,
+         to_artifact_id, to_assertion_id, to_instance_id,
+         to_revision, to_effect_id, created_by
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8,
+         $9, $10, $11, $12, $13, $14
+       )
+       ON CONFLICT (tenant_id, edge_id) DO UPDATE SET
+         edge_id = EXCLUDED.edge_id
+       RETURNING *`,
+      [
+        principal.tenantId,
+        edgeId,
+        input.relation,
+        from.artifactId,
+        from.assertionId,
+        from.instanceId,
+        from.revision,
+        from.effectId,
+        to.artifactId,
+        to.assertionId,
+        to.instanceId,
+        to.revision,
+        to.effectId,
+        principal.principalId,
+      ],
+    );
+    return mapLineage(
+      requiredRow(result.rows[0], "Lineage edge was not persisted"),
+    );
+  }
+
+  private async validateLineage(
+    client: PoolClient,
+    tenantId: string,
+    input: {
+      relation: LineageRelation;
+      from: LineageEndpoint;
+      to: LineageEndpoint;
+    },
+  ): Promise<void> {
+    if (stableStringify(input.from) === stableStringify(input.to)) {
+      throw new KernelError(
+        "invalid_input",
+        "Lineage cannot link a node to itself",
+      );
+    }
+    await this.requireLineageEndpoint(client, tenantId, input.from);
+    await this.requireLineageEndpoint(client, tenantId, input.to);
+    const time = await currentSystemTime(client);
+    switch (input.relation) {
+      case "evidence_for":
+        requireLineageTypes(input, "artifact", "assertion");
+        return;
+      case "supports":
+      case "contradicts":
+        requireLineageTypes(input, "assertion", "assertion");
+        return;
+      case "governs":
+        if (
+          input.from.type !== "assertion" ||
+          (input.to.type !== "assertion" && input.to.type !== "effect")
+        ) {
+          throw new KernelError(
+            "invalid_input",
+            "governs requires an assertion source and assertion or effect target",
+          );
+        }
+        await this.requireCurrentAssertionKind(
+          client,
+          tenantId,
+          input.from.assertionId,
+          "directive",
+          time,
+        );
+        return;
+      case "authorizes":
+        if (
+          input.from.type !== "assertion" ||
+          input.to.type !== "effect"
+        ) {
+          throw new KernelError(
+            "invalid_input",
+            "authorizes requires assertion to effect",
+          );
+        }
+        await this.requireCurrentAssertionKind(
+          client,
+          tenantId,
+          input.from.assertionId,
+          "decision",
+          time,
+        );
+        return;
+      case "produces":
+        requireLineageTypes(input, "workflow_revision", "effect");
+        return;
+      case "verifies":
+        requireLineageTypes(input, "effect", "assertion");
+        if (input.to.type === "assertion") {
+          await this.requireCurrentAssertionKind(
+            client,
+            tenantId,
+            input.to.assertionId,
+            "observation",
+            time,
+          );
+        }
+        return;
+    }
+  }
+
+  private async requireLineageEndpoint(
+    client: PoolClient,
+    tenantId: string,
+    endpoint: LineageEndpoint,
+  ): Promise<void> {
+    let result;
+    switch (endpoint.type) {
+      case "artifact":
+        result = await client.query(
+          `SELECT 1 FROM agentic.artifacts
+           WHERE tenant_id = $1 AND artifact_id = $2`,
+          [tenantId, endpoint.artifactId],
+        );
+        break;
+      case "assertion":
+        result = await client.query(
+          `SELECT 1 FROM agentic.assertions
+           WHERE tenant_id = $1 AND assertion_id = $2`,
+          [tenantId, endpoint.assertionId],
+        );
+        break;
+      case "workflow_revision":
+        result = await client.query(
+          `SELECT 1 FROM agentic.machine_history
+           WHERE tenant_id = $1 AND instance_id = $2 AND revision = $3`,
+          [tenantId, endpoint.instanceId, endpoint.revision],
+        );
+        break;
+      case "effect":
+        result = await client.query(
+          `SELECT 1 FROM agentic.effect_intents
+           WHERE tenant_id = $1 AND effect_id = $2`,
+          [tenantId, endpoint.effectId],
+        );
+        break;
+    }
+    if (result.rowCount === 0) {
+      throw new KernelError(
+        "not_found",
+        `Lineage ${endpoint.type} endpoint was not found`,
+      );
+    }
+  }
+
   private async appendHistory(
     client: PoolClient,
     tenantId: string,
     instanceId: string,
     revision: number,
     transitionName: string,
-    priorState: MachineState,
-    nextState: MachineState,
-    data: OrderData,
+    priorState: string,
+    nextState: string,
+    data: JsonValue | OrderData,
     time: Date,
   ): Promise<void> {
     const eventId = deterministicId(
@@ -1427,7 +2143,7 @@ export class ProductionKernel {
         transitionName,
         priorState,
         nextState,
-        data,
+        stableStringify(data),
         time,
       ],
     );
@@ -1515,9 +2231,9 @@ export class ProductionKernel {
         principal.purpose,
         operation,
         time,
-        evidenceManifest,
+        stableStringify(evidenceManifest),
         resultHash,
-        result,
+        stableStringify(result),
       ],
     );
     return {
@@ -1634,7 +2350,13 @@ function mapInventory(row: InventoryRow): InventoryRecord {
   };
 }
 
-function mapMachine(row: MachineRow): MachineRecord {
+function mapMachine(row: MachineRow | WorkflowRow): MachineRecord {
+  if (row.machine_type !== "retail_order" || !isOrderData(row.data_json)) {
+    throw new KernelError(
+      "conflict",
+      `Machine ${row.instance_id} is not a retail order`,
+    );
+  }
   return {
     tenantId: row.tenant_id,
     instanceId: row.instance_id,
@@ -1642,6 +2364,21 @@ function mapMachine(row: MachineRow): MachineRecord {
     state: row.state as MachineState,
     data: row.data_json,
     revision: Number(row.revision),
+    terminal: row.terminal,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function mapWorkflow(row: WorkflowRow): WorkflowRecord {
+  return {
+    tenantId: row.tenant_id,
+    instanceId: row.instance_id,
+    machineType: row.machine_type,
+    state: row.state,
+    data: row.data_json,
+    revision: Number(row.revision),
+    terminal: row.terminal,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -1655,15 +2392,115 @@ function mapEffect(row: EffectRow): EffectRecord {
     originatingRevision: Number(row.originating_revision),
     effectName: row.effect_name,
     effectType: row.effect_type,
+    outcomeHandler: row.outcome_handler as
+      | "retail_order_payment"
+      | "none",
     target: row.target_url,
+    statusUrl: row.status_url,
     request: row.request_json,
     idempotencyKey: row.idempotency_key,
+    decisionAssertionId: row.decision_assertion_id,
+    policyAssertionId: row.policy_assertion_id,
     status: row.status as EffectRecord["status"],
     attemptCount: row.attempt_count,
     outcome: row.outcome_json,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
+}
+
+function mapLineage(row: LineageRow): LineageEdgeRecord {
+  return {
+    tenantId: row.tenant_id,
+    edgeId: row.edge_id,
+    relation: row.relation as LineageRelation,
+    from: lineageEndpointFromRow(row, "from"),
+    to: lineageEndpointFromRow(row, "to"),
+    createdBy: row.created_by,
+    createdAt: row.created_at.toISOString(),
+  };
+}
+
+function lineageEndpointFromRow(
+  row: LineageRow,
+  side: "from" | "to",
+): LineageEndpoint {
+  const artifactId =
+    side === "from" ? row.from_artifact_id : row.to_artifact_id;
+  if (artifactId) {
+    return { type: "artifact", artifactId };
+  }
+  const assertionId =
+    side === "from" ? row.from_assertion_id : row.to_assertion_id;
+  if (assertionId) {
+    return { type: "assertion", assertionId };
+  }
+  const instanceId =
+    side === "from" ? row.from_instance_id : row.to_instance_id;
+  const revision =
+    side === "from" ? row.from_revision : row.to_revision;
+  if (instanceId && revision !== null) {
+    return {
+      type: "workflow_revision",
+      instanceId,
+      revision: Number(revision),
+    };
+  }
+  const effectId =
+    side === "from" ? row.from_effect_id : row.to_effect_id;
+  if (effectId) {
+    return { type: "effect", effectId };
+  }
+  throw new Error(`Lineage ${side} endpoint is invalid`);
+}
+
+function lineageColumns(endpoint: LineageEndpoint): {
+  artifactId: string | null;
+  assertionId: string | null;
+  instanceId: string | null;
+  revision: number | null;
+  effectId: string | null;
+} {
+  return {
+    artifactId: endpoint.type === "artifact" ? endpoint.artifactId : null,
+    assertionId:
+      endpoint.type === "assertion" ? endpoint.assertionId : null,
+    instanceId:
+      endpoint.type === "workflow_revision" ? endpoint.instanceId : null,
+    revision:
+      endpoint.type === "workflow_revision" ? endpoint.revision : null,
+    effectId: endpoint.type === "effect" ? endpoint.effectId : null,
+  };
+}
+
+function requireLineageTypes(
+  input: {
+    relation: LineageRelation;
+    from: LineageEndpoint;
+    to: LineageEndpoint;
+  },
+  fromType: LineageEndpoint["type"],
+  toType: LineageEndpoint["type"],
+): void {
+  if (input.from.type !== fromType || input.to.type !== toType) {
+    throw new KernelError(
+      "invalid_input",
+      `${input.relation} requires ${fromType} to ${toType}`,
+    );
+  }
+}
+
+function isOrderData(value: JsonValue | OrderData): value is OrderData {
+  return (
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof value === "object" &&
+    typeof value.orderId === "string" &&
+    typeof value.sku === "string" &&
+    typeof value.location === "string" &&
+    typeof value.quantity === "number" &&
+    typeof value.reservationExpiresAt === "string"
+  );
 }
 
 function artifactMetadata(row: ArtifactRow): JsonValue {
@@ -1794,6 +2631,52 @@ async function currentSystemTime(client: PoolClient): Promise<string> {
 
 function deterministicId(prefix: string, ...parts: string[]): string {
   return `${prefix}_${sha256(...parts).slice(0, 32)}`;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unsupported operation ${JSON.stringify(value)}`);
+}
+
+function effectProviderNamespace(target: string): string {
+  return new URL(target).origin.toLowerCase();
+}
+
+function effectRequestHash(
+  principal: AuthenticatedPrincipal,
+  input: EffectRequestIdentity,
+): string {
+  return sha256(
+    stableStringify({
+      principalId: principal.principalId,
+      purpose: principal.purpose,
+      ...input,
+    }),
+  );
+}
+
+function legacyEffectRequestMatches(
+  effect: EffectRow,
+  principal: AuthenticatedPrincipal,
+  request: EffectRequestIdentity,
+): boolean {
+  return (
+    effect.instance_id === request.instanceId &&
+    (
+      request.originatingRevision === undefined ||
+      Number(effect.originating_revision) === request.originatingRevision
+    ) &&
+    effect.effect_name === request.effectName &&
+    effect.effect_type === request.effectType &&
+    effect.target_url === request.target &&
+    effect.status_url === request.statusUrl &&
+    stableStringify(effect.request_json) === stableStringify(request.request) &&
+    effect.authorizing_key_id === principal.keyId &&
+    effect.purpose === principal.purpose &&
+    Number(effect.budget_amount) === Number(request.amount) &&
+    effect.currency === request.currency &&
+    effect.decision_assertion_id === request.decisionAssertionId &&
+    effect.policy_assertion_id === request.policyAssertionId
+  );
 }
 
 function roundScore(value: number): number {

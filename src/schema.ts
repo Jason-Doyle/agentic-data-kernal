@@ -112,9 +112,11 @@ CREATE TABLE IF NOT EXISTS machine_instances (
   state TEXT NOT NULL,
   data_json TEXT NOT NULL,
   revision INTEGER NOT NULL,
+  terminal INTEGER NOT NULL DEFAULT 0 CHECK (terminal IN (0, 1)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  PRIMARY KEY (tenant_id, instance_id)
+  PRIMARY KEY (tenant_id, instance_id),
+  CHECK (machine_type = 'retail_order' OR instance_id NOT LIKE 'order:%')
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS machine_inbox (
@@ -171,9 +173,15 @@ CREATE TABLE IF NOT EXISTS effect_intents (
   originating_revision INTEGER NOT NULL,
   effect_name TEXT NOT NULL,
   effect_type TEXT NOT NULL,
+  outcome_handler TEXT NOT NULL DEFAULT 'retail_order_payment' CHECK (
+    outcome_handler IN ('retail_order_payment', 'none')
+  ),
   target TEXT NOT NULL,
+  status_url TEXT,
   request_json TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
+  decision_assertion_id TEXT,
+  policy_assertion_id TEXT,
   status TEXT NOT NULL CHECK (
     status IN ('planned', 'unknown', 'succeeded', 'failed', 'cancelled')
   ),
@@ -184,7 +192,13 @@ CREATE TABLE IF NOT EXISTS effect_intents (
   PRIMARY KEY (tenant_id, effect_id),
   UNIQUE (tenant_id, instance_id, originating_revision, effect_name),
   FOREIGN KEY (tenant_id, instance_id)
-    REFERENCES machine_instances (tenant_id, instance_id)
+    REFERENCES machine_instances (tenant_id, instance_id),
+  FOREIGN KEY (tenant_id, instance_id, originating_revision)
+    REFERENCES machine_history (tenant_id, instance_id, revision),
+  FOREIGN KEY (tenant_id, decision_assertion_id)
+    REFERENCES assertions (tenant_id, assertion_id),
+  FOREIGN KEY (tenant_id, policy_assertion_id)
+    REFERENCES assertions (tenant_id, assertion_id)
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS effect_attempts (
@@ -198,6 +212,82 @@ CREATE TABLE IF NOT EXISTS effect_attempts (
   FOREIGN KEY (tenant_id, effect_id)
     REFERENCES effect_intents (tenant_id, effect_id)
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS lineage_edges (
+  tenant_id TEXT NOT NULL,
+  edge_id TEXT NOT NULL,
+  relation TEXT NOT NULL CHECK (
+    relation IN (
+      'evidence_for',
+      'supports',
+      'contradicts',
+      'governs',
+      'authorizes',
+      'produces',
+      'verifies'
+    )
+  ),
+  from_artifact_id TEXT,
+  from_assertion_id TEXT,
+  from_instance_id TEXT,
+  from_revision INTEGER,
+  from_effect_id TEXT,
+  to_artifact_id TEXT,
+  to_assertion_id TEXT,
+  to_instance_id TEXT,
+  to_revision INTEGER,
+  to_effect_id TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, edge_id),
+  FOREIGN KEY (tenant_id, from_artifact_id)
+    REFERENCES artifacts (tenant_id, artifact_id),
+  FOREIGN KEY (tenant_id, from_assertion_id)
+    REFERENCES assertions (tenant_id, assertion_id),
+  FOREIGN KEY (tenant_id, from_instance_id, from_revision)
+    REFERENCES machine_history (tenant_id, instance_id, revision),
+  FOREIGN KEY (tenant_id, from_effect_id)
+    REFERENCES effect_intents (tenant_id, effect_id),
+  FOREIGN KEY (tenant_id, to_artifact_id)
+    REFERENCES artifacts (tenant_id, artifact_id),
+  FOREIGN KEY (tenant_id, to_assertion_id)
+    REFERENCES assertions (tenant_id, assertion_id),
+  FOREIGN KEY (tenant_id, to_instance_id, to_revision)
+    REFERENCES machine_history (tenant_id, instance_id, revision),
+  FOREIGN KEY (tenant_id, to_effect_id)
+    REFERENCES effect_intents (tenant_id, effect_id),
+  CHECK (
+    (from_instance_id IS NULL) = (from_revision IS NULL)
+  ),
+  CHECK (
+    (to_instance_id IS NULL) = (to_revision IS NULL)
+  ),
+  CHECK (
+    (
+      (from_artifact_id IS NOT NULL)
+      + (from_assertion_id IS NOT NULL)
+      + (from_instance_id IS NOT NULL)
+      + (from_effect_id IS NOT NULL)
+    ) = 1
+  ),
+  CHECK (
+    (
+      (to_artifact_id IS NOT NULL)
+      + (to_assertion_id IS NOT NULL)
+      + (to_instance_id IS NOT NULL)
+      + (to_effect_id IS NOT NULL)
+    ) = 1
+  )
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS lineage_from_assertion
+  ON lineage_edges (tenant_id, from_assertion_id);
+CREATE INDEX IF NOT EXISTS lineage_to_assertion
+  ON lineage_edges (tenant_id, to_assertion_id);
+CREATE INDEX IF NOT EXISTS lineage_from_effect
+  ON lineage_edges (tenant_id, from_effect_id);
+CREATE INDEX IF NOT EXISTS lineage_to_effect
+  ON lineage_edges (tenant_id, to_effect_id);
 
 CREATE TABLE IF NOT EXISTS execution_receipts (
   tenant_id TEXT NOT NULL,

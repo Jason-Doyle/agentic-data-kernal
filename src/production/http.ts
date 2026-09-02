@@ -66,7 +66,7 @@ export async function startProductionHttpServer({
           `SELECT EXISTS (
              SELECT 1
              FROM agentic.schema_migrations
-             WHERE version = '002'
+             WHERE version = '003'
            ) AS applied`,
         );
         const migrationsApplied = migration.rows[0]?.applied === true;

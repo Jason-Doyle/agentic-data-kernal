@@ -5,7 +5,7 @@ import type { Logger } from "pino";
 import type { PoolClient, QueryResultRow } from "pg";
 import { Agent, fetch as undiciFetch } from "undici";
 import type { JsonValue, MachineState, OrderData } from "../types.js";
-import { sha256 } from "../util.js";
+import { sha256, stableStringify } from "../util.js";
 import type { ProductionConfig } from "./config.js";
 import {
   ProductionDatabase,
@@ -22,6 +22,7 @@ interface LeasedEffect extends QueryResultRow {
   originating_revision: string | number;
   effect_name: string;
   effect_type: string;
+  outcome_handler: "retail_order_payment" | "none";
   target_url: string;
   status_url: string;
   request_json: JsonValue;
@@ -442,7 +443,7 @@ export class EffectWorker {
           effect.lease_token,
           delivery.status,
           delivery.responseStatus,
-          delivery.outcome,
+          stableStringify(delivery.outcome),
           time,
         ],
       );
@@ -465,7 +466,7 @@ export class EffectWorker {
           nextStatus,
           nextAttemptCount,
           nextReconciliationCount,
-          delivery.outcome,
+          stableStringify(delivery.outcome),
           retryDelaySeconds(nextReconciliationCount),
           time,
           effect.tenant_id,
@@ -475,11 +476,24 @@ export class EffectWorker {
       if (delivery.status === "unknown") {
         return;
       }
-      await this.finishOrder(client, locked, delivery.status, time);
+      if (locked.outcome_handler === "retail_order_payment") {
+        await this.finishRetailOrder(
+          client,
+          locked,
+          delivery.status,
+          time,
+        );
+      }
+      await settleEffectBudget(
+        client,
+        locked,
+        delivery.status,
+        this.logger,
+      );
     });
   }
 
-  private async finishOrder(
+  private async finishRetailOrder(
     client: PoolClient,
     effect: LeasedEffect,
     status: "succeeded" | "failed",
@@ -517,28 +531,15 @@ export class EffectWorker {
       if (inventory.rowCount !== 1) {
         throw new Error("Reserved inventory was unavailable for effect commit");
       }
-      await client.query(
-        `UPDATE agentic_auth.api_keys
-         SET effect_budget_reserved = effect_budget_reserved - $1,
-             effect_budget_spent = effect_budget_spent + $1
-         WHERE key_id = $2 AND tenant_id = $3`,
-        [effect.budget_amount, effect.authorizing_key_id, effect.tenant_id],
-      );
     } else {
       await releaseOrderInventory(client, effect.tenant_id, machine.data_json, time);
-      await client.query(
-        `UPDATE agentic_auth.api_keys
-         SET effect_budget_reserved = effect_budget_reserved - $1
-         WHERE key_id = $2 AND tenant_id = $3`,
-        [effect.budget_amount, effect.authorizing_key_id, effect.tenant_id],
-      );
     }
     const nextState: MachineState =
       status === "succeeded" ? "confirmed" : "failed";
     const nextRevision = Number(machine.revision) + 1;
     await client.query(
       `UPDATE agentic.machine_instances
-       SET state = $1, revision = $2, updated_at = $3
+       SET state = $1, revision = $2, terminal = TRUE, updated_at = $3
        WHERE tenant_id = $4 AND instance_id = $5`,
       [
         nextState,
@@ -581,6 +582,9 @@ export class EffectWorker {
        WHERE key_id = $2 AND tenant_id = $3`,
       [effect.budget_amount, effect.authorizing_key_id, effect.tenant_id],
     );
+    if (effect.outcome_handler !== "retail_order_payment") {
+      return;
+    }
     const machineResult = await client.query<MachineRow>(
       `SELECT state, revision, data_json
        FROM agentic.machine_instances
@@ -596,7 +600,7 @@ export class EffectWorker {
     const nextRevision = Number(machine.revision) + 1;
     await client.query(
       `UPDATE agentic.machine_instances
-       SET state = 'failed', revision = $1, updated_at = $2
+       SET state = 'failed', revision = $1, terminal = TRUE, updated_at = $2
        WHERE tenant_id = $3 AND instance_id = $4`,
       [nextRevision, time, effect.tenant_id, effect.instance_id],
     );
@@ -816,6 +820,53 @@ function providerStatus(
     value.status === "pending"
     ? value.status
     : null;
+}
+
+async function settleEffectBudget(
+  client: PoolClient,
+  effect: LeasedEffect,
+  status: "succeeded" | "failed",
+  logger: Logger,
+): Promise<void> {
+  const result =
+    status === "succeeded"
+      ? await client.query(
+          `UPDATE agentic_auth.api_keys
+           SET effect_budget_reserved = GREATEST(
+                 0,
+                 effect_budget_reserved - $1
+               ),
+               effect_budget_spent = effect_budget_spent + $1
+           WHERE key_id = $2 AND tenant_id = $3`,
+          [
+            effect.budget_amount,
+            effect.authorizing_key_id,
+            effect.tenant_id,
+          ],
+        )
+      : await client.query(
+          `UPDATE agentic_auth.api_keys
+           SET effect_budget_reserved = GREATEST(
+             0,
+             effect_budget_reserved - $1
+           )
+           WHERE key_id = $2 AND tenant_id = $3`,
+          [
+            effect.budget_amount,
+            effect.authorizing_key_id,
+            effect.tenant_id,
+          ],
+        );
+  if (result.rowCount !== 1) {
+    logger.error(
+      {
+        effectId: effect.effect_id,
+        keyId: effect.authorizing_key_id,
+        status,
+      },
+      "Effect terminalized without a matching budget record",
+    );
+  }
 }
 
 function retryDelaySeconds(reconciliationCount: number): number {

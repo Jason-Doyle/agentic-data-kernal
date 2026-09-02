@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  AdvanceWorkflowInput,
   ArtifactInput,
   ArtifactRecord,
   AssertionInput,
@@ -7,14 +8,20 @@ import type {
   AssertionRecord,
   AssertionStatus,
   CatalogDescription,
+  CreateWorkflowInput,
   EffectRecord,
+  EffectOutcomeInput,
   EffectStatus,
   EntityInput,
   EntityRecord,
   EpistemicKind,
   ExecutionReceipt,
+  GenericEffectRequestInput,
   InventoryRecord,
   JsonValue,
+  LineageEdgeRecord,
+  LineageEndpoint,
+  LineageRelation,
   MachineRecord,
   MachineState,
   OrderData,
@@ -29,6 +36,7 @@ import type {
   SearchQuery,
   Strength,
   TypedValue,
+  WorkflowRecord,
 } from "./types.js";
 import type { SqlRow, SqlValue } from "./store.js";
 import { SqliteStore } from "./store.js";
@@ -103,6 +111,7 @@ interface MachineDbRow extends SqlRow {
   state: string;
   data_json: string;
   revision: number;
+  terminal: number;
   created_at: string;
   updated_at: string;
 }
@@ -114,14 +123,36 @@ interface EffectDbRow extends SqlRow {
   originating_revision: number;
   effect_name: string;
   effect_type: string;
+  outcome_handler: string;
   target: string;
+  status_url: string | null;
   request_json: string;
   idempotency_key: string;
+  decision_assertion_id: string | null;
+  policy_assertion_id: string | null;
   status: string;
   attempt_count: number;
   outcome_json: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface LineageDbRow extends SqlRow {
+  tenant_id: string;
+  edge_id: string;
+  relation: string;
+  from_artifact_id: string | null;
+  from_assertion_id: string | null;
+  from_instance_id: string | null;
+  from_revision: number | null;
+  from_effect_id: string | null;
+  to_artifact_id: string | null;
+  to_assertion_id: string | null;
+  to_instance_id: string | null;
+  to_revision: number | null;
+  to_effect_id: string | null;
+  created_by: string;
+  created_at: string;
 }
 
 interface TimerDbRow extends SqlRow {
@@ -449,6 +480,16 @@ export class AgenticKernel {
         assertionId,
         searchText,
       );
+      if (input.sourceArtifactId) {
+        this.insertLineage(principal, {
+          relation: "evidence_for",
+          from: {
+            type: "artifact",
+            artifactId: input.sourceArtifactId,
+          },
+          to: { type: "assertion", assertionId },
+        });
+      }
       return this.getAssertion(principal.tenantId, assertionId);
     });
   }
@@ -685,6 +726,326 @@ export class AgenticKernel {
       .filter((hit) => hit.combinedScore > 0)
       .sort((left, right) => right.combinedScore - left.combinedScore)
       .slice(0, clamp(query.limit ?? 20, 1, 100));
+  }
+
+  public createWorkflow(
+    principal: PrincipalContext,
+    input: CreateWorkflowInput,
+  ): WorkflowRecord {
+    if (input.workflowType === "retail_order") {
+      throw new KernelError(
+        "invalid_input",
+        "retail_order is reserved for the retail workflow",
+      );
+    }
+    if (input.instanceId.startsWith("order:")) {
+      throw new KernelError(
+        "invalid_input",
+        "The order: identifier namespace is reserved for retail workflows",
+      );
+    }
+    return this.store.transaction(() => {
+      const existing = this.store.get<MachineDbRow>(
+        `SELECT * FROM machine_instances
+         WHERE tenant_id = ? AND instance_id = ?`,
+        principal.tenantId,
+        input.instanceId,
+      );
+      if (existing) {
+        throw new KernelError(
+          "conflict",
+          `Workflow ${input.instanceId} already exists`,
+        );
+      }
+      const createdAt = this.writeTime();
+      this.store.run(
+        `INSERT INTO machine_instances (
+           tenant_id, instance_id, machine_type, state, data_json, revision,
+           terminal, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+        principal.tenantId,
+        input.instanceId,
+        input.workflowType,
+        input.initialState,
+        stableStringify(input.data),
+        createdAt,
+        createdAt,
+      );
+      this.appendHistory(
+        principal.tenantId,
+        input.instanceId,
+        1,
+        "create_workflow",
+        "uninitialized",
+        input.initialState,
+        input.data,
+        createdAt,
+      );
+      return this.getWorkflow(principal.tenantId, input.instanceId);
+    });
+  }
+
+  public advanceWorkflow(
+    principal: PrincipalContext,
+    input: AdvanceWorkflowInput,
+  ): WorkflowRecord {
+    return this.store.transaction(() => {
+      const workflow = this.getWorkflow(
+        principal.tenantId,
+        input.instanceId,
+      );
+      if (workflow.terminal) {
+        throw new KernelError(
+          "conflict",
+          `Workflow ${input.instanceId} is terminal`,
+        );
+      }
+      if (
+        workflow.revision !== input.expectedRevision ||
+        workflow.state !== input.expectedState
+      ) {
+        throw new KernelError(
+          "conflict",
+          `Workflow ${input.instanceId} changed before ${input.transitionName}`,
+        );
+      }
+      const nextRevision = workflow.revision + 1;
+      const updatedAt = this.writeTime();
+      const changes = this.store.run(
+        `UPDATE machine_instances
+         SET state = ?, data_json = ?, revision = ?, terminal = ?,
+             updated_at = ?
+         WHERE tenant_id = ? AND instance_id = ? AND revision = ?
+           AND state = ? AND terminal = 0 AND machine_type <> 'retail_order'`,
+        input.toState,
+        stableStringify(input.data),
+        nextRevision,
+        input.terminal ? 1 : 0,
+        updatedAt,
+        principal.tenantId,
+        input.instanceId,
+        input.expectedRevision,
+        input.expectedState,
+      );
+      if (changes !== 1) {
+        throw new KernelError(
+          "conflict",
+          `Workflow ${input.instanceId} transition was not committed`,
+        );
+      }
+      this.appendHistory(
+        principal.tenantId,
+        input.instanceId,
+        nextRevision,
+        input.transitionName,
+        workflow.state,
+        input.toState,
+        input.data,
+        updatedAt,
+      );
+      return this.getWorkflow(principal.tenantId, input.instanceId);
+    });
+  }
+
+  public requestEffect(
+    principal: PrincipalContext,
+    input: GenericEffectRequestInput,
+  ): EffectRecord {
+    return this.store.transaction(() => {
+      const operationKey = `effect:${input.idempotencyKey}`;
+      const requestHash = sha256(stableStringify(input));
+      const replay = this.getIdempotency<EffectRecord>(
+        principal.tenantId,
+        operationKey,
+        requestHash,
+      );
+      if (replay) {
+        return replay;
+      }
+      const workflow = this.getWorkflow(
+        principal.tenantId,
+        input.instanceId,
+      );
+      if (workflow.terminal) {
+        throw new KernelError(
+          "conflict",
+          `Workflow ${input.instanceId} is terminal`,
+        );
+      }
+      if (workflow.revision !== input.expectedRevision) {
+        throw new KernelError(
+          "conflict",
+          `Workflow ${input.instanceId} revision changed`,
+        );
+      }
+      this.requireCurrentAssertionKind(
+        principal.tenantId,
+        input.decisionAssertionId,
+        "decision",
+      );
+      this.requireCurrentAssertionKind(
+        principal.tenantId,
+        input.policyAssertionId,
+        "directive",
+      );
+      const effectId = deterministicId(
+        "effect",
+        principal.tenantId,
+        workflow.instanceId,
+        String(workflow.revision),
+        input.effectName,
+      );
+      const createdAt = this.writeTime();
+      this.store.run(
+        `INSERT INTO effect_intents (
+           tenant_id, effect_id, instance_id, originating_revision,
+           effect_name, effect_type, outcome_handler, target, status_url,
+           request_json, idempotency_key, decision_assertion_id,
+           policy_assertion_id, status, attempt_count, outcome_json,
+           created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, 'none', ?, ?, ?, ?, ?, ?,
+           'planned', 0, NULL, ?, ?)`,
+        principal.tenantId,
+        effectId,
+        workflow.instanceId,
+        workflow.revision,
+        input.effectName,
+        input.effectType,
+        input.target,
+        input.statusUrl ?? null,
+        stableStringify(input.request),
+        input.idempotencyKey,
+        input.decisionAssertionId,
+        input.policyAssertionId,
+        createdAt,
+        createdAt,
+      );
+      const effectEndpoint: LineageEndpoint = {
+        type: "effect",
+        effectId,
+      };
+      this.insertLineage(principal, {
+        relation: "authorizes",
+        from: {
+          type: "assertion",
+          assertionId: input.decisionAssertionId,
+        },
+        to: effectEndpoint,
+      });
+      this.insertLineage(principal, {
+        relation: "governs",
+        from: {
+          type: "assertion",
+          assertionId: input.policyAssertionId,
+        },
+        to: effectEndpoint,
+      });
+      this.insertLineage(principal, {
+        relation: "produces",
+        from: {
+          type: "workflow_revision",
+          instanceId: workflow.instanceId,
+          revision: workflow.revision,
+        },
+        to: effectEndpoint,
+      });
+      const effect = this.getEffect(principal.tenantId, effectId);
+      this.putIdempotency(
+        principal.tenantId,
+        operationKey,
+        requestHash,
+        effect,
+      );
+      return effect;
+    });
+  }
+
+  public recordEffectOutcome(
+    principal: PrincipalContext,
+    input: EffectOutcomeInput,
+  ): EffectRecord {
+    return this.store.transaction(() => {
+      const operationKey =
+        `generic-effect-outcome:${input.effectId}:${input.idempotencyKey}`;
+      const requestHash = sha256(stableStringify(input));
+      const replay = this.getIdempotency<EffectRecord>(
+        principal.tenantId,
+        operationKey,
+        requestHash,
+      );
+      if (replay) {
+        return replay;
+      }
+      const effect = this.getEffect(principal.tenantId, input.effectId);
+      if (effect.outcomeHandler !== "none") {
+        throw new KernelError(
+          "conflict",
+          "Generic outcomes cannot finalize retail payment effects",
+        );
+      }
+      if (effect.status === "succeeded" || effect.status === "failed") {
+        if (effect.status !== input.status) {
+          throw new KernelError(
+            "conflict",
+            `Effect is already terminal as ${effect.status}`,
+          );
+        }
+        this.putIdempotency(
+          principal.tenantId,
+          operationKey,
+          requestHash,
+          effect,
+        );
+        return effect;
+      }
+      const updatedAt = this.writeTime();
+      const attemptNumber = effect.attemptCount + 1;
+      const outcome = input.outcome ?? null;
+      this.store.run(
+        `INSERT INTO effect_attempts (
+           tenant_id, effect_id, attempt_number, status, outcome_json,
+           created_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+        principal.tenantId,
+        effect.effectId,
+        attemptNumber,
+        input.status,
+        outcome === null ? null : stableStringify(outcome),
+        updatedAt,
+      );
+      this.store.run(
+        `UPDATE effect_intents
+         SET status = ?, attempt_count = ?, outcome_json = ?, updated_at = ?
+         WHERE tenant_id = ? AND effect_id = ?`,
+        input.status,
+        attemptNumber,
+        outcome === null ? null : stableStringify(outcome),
+        updatedAt,
+        principal.tenantId,
+        effect.effectId,
+      );
+      const updated = this.getEffect(principal.tenantId, effect.effectId);
+      this.putIdempotency(
+        principal.tenantId,
+        operationKey,
+        requestHash,
+        updated,
+      );
+      return updated;
+    });
+  }
+
+  public addLineage(
+    principal: PrincipalContext,
+    input: {
+      relation: LineageRelation;
+      from: LineageEndpoint;
+      to: LineageEndpoint;
+    },
+  ): LineageEdgeRecord {
+    return this.store.transaction(() =>
+      this.insertLineage(principal, input),
+    );
   }
 
   public seedInventory(
@@ -982,9 +1343,12 @@ export class AgenticKernel {
       this.store.run(
         `INSERT INTO effect_intents (
            tenant_id, effect_id, instance_id, originating_revision,
-           effect_name, effect_type, target, request_json, idempotency_key,
-           status, attempt_count, outcome_json, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, 'payment.capture', ?, ?, ?,
+           effect_name, effect_type, outcome_handler, target, status_url,
+           request_json, idempotency_key, decision_assertion_id,
+           policy_assertion_id, status, attempt_count, outcome_json,
+           created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, 'payment.capture',
+           'retail_order_payment', ?, ?, ?, ?, NULL, NULL,
            'planned', 0, NULL, ?, ?)`,
         principal.tenantId,
         effectId,
@@ -992,6 +1356,7 @@ export class AgenticKernel {
         nextRevision,
         effectName,
         input.paymentTarget,
+        input.paymentStatusUrl ?? null,
         stableStringify(request),
         input.idempotencyKey,
         updatedAt,
@@ -1096,10 +1461,11 @@ export class AgenticKernel {
       const nextRevision = machine.revision + 1;
       const machineChanges = this.store.run(
         `UPDATE machine_instances
-         SET state = ?, revision = ?, updated_at = ?
+         SET state = ?, revision = ?, terminal = ?, updated_at = ?
          WHERE tenant_id = ? AND instance_id = ? AND revision = ?`,
         nextState,
         nextRevision,
+        nextState === "payment_pending" ? 0 : 1,
         updatedAt,
         principal.tenantId,
         machine.instanceId,
@@ -1178,7 +1544,7 @@ export class AgenticKernel {
         const nextRevision = machine.revision + 1;
         const machineChanges = this.store.run(
           `UPDATE machine_instances
-           SET state = 'cancelled', revision = ?, updated_at = ?
+           SET state = 'cancelled', revision = ?, terminal = 1, updated_at = ?
            WHERE tenant_id = ? AND instance_id = ? AND revision = ?`,
           nextRevision,
           updatedAt,
@@ -1219,14 +1585,32 @@ export class AgenticKernel {
   }
 
   public getMachine(tenantId: string, instanceId: string): MachineRecord {
-    const machine = this.tryGetMachine(tenantId, instanceId);
-    if (!machine) {
+    const row = this.getMachineRow(tenantId, instanceId);
+    return mapMachine(row);
+  }
+
+  public getMachineRecord(
+    tenantId: string,
+    instanceId: string,
+  ): MachineRecord | WorkflowRecord {
+    const row = this.getMachineRow(tenantId, instanceId);
+    return row.machine_type === "retail_order"
+      ? mapMachine(row)
+      : mapWorkflow(row);
+  }
+
+  public getWorkflow(
+    tenantId: string,
+    instanceId: string,
+  ): WorkflowRecord {
+    const row = this.getMachineRow(tenantId, instanceId);
+    if (row.machine_type === "retail_order") {
       throw new KernelError(
-        "not_found",
-        `Machine ${instanceId} was not found`,
+        "conflict",
+        "Generic workflow operations cannot modify retail orders",
       );
     }
-    return machine;
+    return mapWorkflow(row);
   }
 
   public listEffects(tenantId: string, instanceId?: string): EffectRecord[] {
@@ -1380,6 +1764,11 @@ export class AgenticKernel {
         "assert",
         "resolve",
         "search",
+        "create_workflow",
+        "advance_workflow",
+        "request_effect",
+        "add_lineage",
+        "record_effect_outcome",
         "seed_inventory",
         "reserve_inventory",
         "request_payment",
@@ -1416,6 +1805,8 @@ export class AgenticKernel {
       guarantees: [
         "append-oriented bitemporal assertions",
         "explicit conflict and unknown results",
+        "FK-backed causal lineage",
+        "optimistic generic workflow transitions",
         "transactional inventory and machine transitions",
         "deterministic timer and effect identities",
         "idempotent intent execution",
@@ -1442,6 +1833,209 @@ export class AgenticKernel {
     this.getEntity(tenantId, entityId);
   }
 
+  private requireCurrentAssertionKind(
+    tenantId: string,
+    assertionId: string,
+    kind: EpistemicKind,
+  ): AssertionRecord {
+    const now = this.readTime();
+    const row = this.store.get<AssertionDbRow>(
+      `SELECT * FROM assertions
+       WHERE tenant_id = ? AND assertion_id = ?
+         AND kind = ? AND status = 'active'
+         AND system_from <= ?
+         AND (system_to IS NULL OR system_to > ?)
+         AND valid_from <= ?
+         AND (valid_to IS NULL OR valid_to > ?)`,
+      tenantId,
+      assertionId,
+      kind,
+      now,
+      now,
+      now,
+      now,
+    );
+    if (!row) {
+      throw new KernelError(
+        "conflict",
+        `Active ${kind} assertion ${assertionId} was not found`,
+      );
+    }
+    return mapAssertion(row);
+  }
+
+  private insertLineage(
+    principal: PrincipalContext,
+    input: {
+      relation: LineageRelation;
+      from: LineageEndpoint;
+      to: LineageEndpoint;
+    },
+  ): LineageEdgeRecord {
+    this.validateLineage(principal.tenantId, input);
+    const edgeId = deterministicId(
+      "lineage",
+      principal.tenantId,
+      input.relation,
+      stableStringify(input.from),
+      stableStringify(input.to),
+    );
+    const from = lineageColumns(input.from);
+    const to = lineageColumns(input.to);
+    const createdAt = this.writeTime();
+    this.store.run(
+      `INSERT OR IGNORE INTO lineage_edges (
+         tenant_id, edge_id, relation,
+         from_artifact_id, from_assertion_id, from_instance_id,
+         from_revision, from_effect_id,
+         to_artifact_id, to_assertion_id, to_instance_id,
+         to_revision, to_effect_id, created_by, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      principal.tenantId,
+      edgeId,
+      input.relation,
+      from.artifactId,
+      from.assertionId,
+      from.instanceId,
+      from.revision,
+      from.effectId,
+      to.artifactId,
+      to.assertionId,
+      to.instanceId,
+      to.revision,
+      to.effectId,
+      principal.principalId,
+      createdAt,
+    );
+    const row = this.store.get<LineageDbRow>(
+      `SELECT * FROM lineage_edges
+       WHERE tenant_id = ? AND edge_id = ?`,
+      principal.tenantId,
+      edgeId,
+    );
+    if (!row) {
+      throw new KernelError("conflict", "Lineage edge was not persisted");
+    }
+    return mapLineage(row);
+  }
+
+  private validateLineage(
+    tenantId: string,
+    input: {
+      relation: LineageRelation;
+      from: LineageEndpoint;
+      to: LineageEndpoint;
+    },
+  ): void {
+    if (stableStringify(input.from) === stableStringify(input.to)) {
+      throw new KernelError("invalid_input", "Lineage cannot link a node to itself");
+    }
+    this.requireLineageEndpoint(tenantId, input.from);
+    this.requireLineageEndpoint(tenantId, input.to);
+    switch (input.relation) {
+      case "evidence_for":
+        requireLineageTypes(input, "artifact", "assertion");
+        return;
+      case "supports":
+      case "contradicts":
+        requireLineageTypes(input, "assertion", "assertion");
+        return;
+      case "governs":
+        if (
+          input.from.type !== "assertion" ||
+          (input.to.type !== "assertion" && input.to.type !== "effect")
+        ) {
+          throw new KernelError(
+            "invalid_input",
+            "governs requires an assertion source and assertion or effect target",
+          );
+        }
+        this.requireCurrentAssertionKind(
+          tenantId,
+          input.from.assertionId,
+          "directive",
+        );
+        return;
+      case "authorizes":
+        if (
+          input.from.type !== "assertion" ||
+          input.to.type !== "effect"
+        ) {
+          throw new KernelError(
+            "invalid_input",
+            "authorizes requires assertion to effect",
+          );
+        }
+        this.requireCurrentAssertionKind(
+          tenantId,
+          input.from.assertionId,
+          "decision",
+        );
+        return;
+      case "produces":
+        requireLineageTypes(input, "workflow_revision", "effect");
+        return;
+      case "verifies":
+        requireLineageTypes(input, "effect", "assertion");
+        if (input.to.type === "assertion") {
+          this.requireCurrentAssertionKind(
+            tenantId,
+            input.to.assertionId,
+            "observation",
+          );
+        }
+        return;
+    }
+  }
+
+  private requireLineageEndpoint(
+    tenantId: string,
+    endpoint: LineageEndpoint,
+  ): void {
+    let row: SqlRow | undefined;
+    switch (endpoint.type) {
+      case "artifact":
+        row = this.store.get(
+          `SELECT 1 AS found FROM artifacts
+           WHERE tenant_id = ? AND artifact_id = ?`,
+          tenantId,
+          endpoint.artifactId,
+        );
+        break;
+      case "assertion":
+        row = this.store.get(
+          `SELECT 1 AS found FROM assertions
+           WHERE tenant_id = ? AND assertion_id = ?`,
+          tenantId,
+          endpoint.assertionId,
+        );
+        break;
+      case "workflow_revision":
+        row = this.store.get(
+          `SELECT 1 AS found FROM machine_history
+           WHERE tenant_id = ? AND instance_id = ? AND revision = ?`,
+          tenantId,
+          endpoint.instanceId,
+          endpoint.revision,
+        );
+        break;
+      case "effect":
+        row = this.store.get(
+          `SELECT 1 AS found FROM effect_intents
+           WHERE tenant_id = ? AND effect_id = ?`,
+          tenantId,
+          endpoint.effectId,
+        );
+        break;
+    }
+    if (!row) {
+      throw new KernelError(
+        "not_found",
+        `Lineage ${endpoint.type} endpoint was not found`,
+      );
+    }
+  }
+
   private tryGetMachine(
     tenantId: string,
     instanceId: string,
@@ -1453,6 +2047,25 @@ export class AgenticKernel {
       instanceId,
     );
     return row ? mapMachine(row) : null;
+  }
+
+  private getMachineRow(
+    tenantId: string,
+    instanceId: string,
+  ): MachineDbRow {
+    const row = this.store.get<MachineDbRow>(
+      `SELECT * FROM machine_instances
+       WHERE tenant_id = ? AND instance_id = ?`,
+      tenantId,
+      instanceId,
+    );
+    if (!row) {
+      throw new KernelError(
+        "not_found",
+        `Machine ${instanceId} was not found`,
+      );
+    }
+    return row;
   }
 
   private getEffect(tenantId: string, effectId: string): EffectRecord {
@@ -1473,9 +2086,9 @@ export class AgenticKernel {
     instanceId: string,
     revision: number,
     transitionName: string,
-    priorState: MachineState,
-    newState: MachineState,
-    data: OrderData,
+    priorState: string,
+    newState: string,
+    data: JsonValue | OrderData,
     createdAt: string,
   ): void {
     const eventId = deterministicId(
@@ -1755,6 +2368,12 @@ function mapInventory(row: InventoryDbRow): InventoryRecord {
 }
 
 function mapMachine(row: MachineDbRow): MachineRecord {
+  if (row.machine_type !== "retail_order") {
+    throw new KernelError(
+      "conflict",
+      `Machine ${row.instance_id} is not a retail order`,
+    );
+  }
   return {
     tenantId: row.tenant_id,
     instanceId: row.instance_id,
@@ -1762,6 +2381,21 @@ function mapMachine(row: MachineDbRow): MachineRecord {
     state: row.state as MachineState,
     data: parseJson<OrderData>(row.data_json),
     revision: row.revision,
+    terminal: row.terminal === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapWorkflow(row: MachineDbRow): WorkflowRecord {
+  return {
+    tenantId: row.tenant_id,
+    instanceId: row.instance_id,
+    machineType: row.machine_type,
+    state: row.state,
+    data: parseJson<JsonValue>(row.data_json),
+    revision: row.revision,
+    terminal: row.terminal === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1775,9 +2409,15 @@ function mapEffect(row: EffectDbRow): EffectRecord {
     originatingRevision: row.originating_revision,
     effectName: row.effect_name,
     effectType: row.effect_type,
+    outcomeHandler: row.outcome_handler as
+      | "retail_order_payment"
+      | "none",
     target: row.target,
+    statusUrl: row.status_url,
     request: parseJson<JsonValue>(row.request_json),
     idempotencyKey: row.idempotency_key,
+    decisionAssertionId: row.decision_assertion_id,
+    policyAssertionId: row.policy_assertion_id,
     status: row.status as EffectStatus,
     attemptCount: row.attempt_count,
     outcome:
@@ -1787,6 +2427,83 @@ function mapEffect(row: EffectDbRow): EffectRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function mapLineage(row: LineageDbRow): LineageEdgeRecord {
+  return {
+    tenantId: row.tenant_id,
+    edgeId: row.edge_id,
+    relation: row.relation as LineageRelation,
+    from: lineageEndpointFromRow(row, "from"),
+    to: lineageEndpointFromRow(row, "to"),
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  };
+}
+
+function lineageEndpointFromRow(
+  row: LineageDbRow,
+  side: "from" | "to",
+): LineageEndpoint {
+  const artifactId =
+    side === "from" ? row.from_artifact_id : row.to_artifact_id;
+  if (artifactId) {
+    return { type: "artifact", artifactId };
+  }
+  const assertionId =
+    side === "from" ? row.from_assertion_id : row.to_assertion_id;
+  if (assertionId) {
+    return { type: "assertion", assertionId };
+  }
+  const instanceId =
+    side === "from" ? row.from_instance_id : row.to_instance_id;
+  const revision =
+    side === "from" ? row.from_revision : row.to_revision;
+  if (instanceId && revision !== null) {
+    return { type: "workflow_revision", instanceId, revision };
+  }
+  const effectId =
+    side === "from" ? row.from_effect_id : row.to_effect_id;
+  if (effectId) {
+    return { type: "effect", effectId };
+  }
+  throw new Error(`Lineage ${side} endpoint is invalid`);
+}
+
+function lineageColumns(endpoint: LineageEndpoint): {
+  artifactId: string | null;
+  assertionId: string | null;
+  instanceId: string | null;
+  revision: number | null;
+  effectId: string | null;
+} {
+  return {
+    artifactId: endpoint.type === "artifact" ? endpoint.artifactId : null,
+    assertionId:
+      endpoint.type === "assertion" ? endpoint.assertionId : null,
+    instanceId:
+      endpoint.type === "workflow_revision" ? endpoint.instanceId : null,
+    revision:
+      endpoint.type === "workflow_revision" ? endpoint.revision : null,
+    effectId: endpoint.type === "effect" ? endpoint.effectId : null,
+  };
+}
+
+function requireLineageTypes(
+  input: {
+    relation: LineageRelation;
+    from: LineageEndpoint;
+    to: LineageEndpoint;
+  },
+  fromType: LineageEndpoint["type"],
+  toType: LineageEndpoint["type"],
+): void {
+  if (input.from.type !== fromType || input.to.type !== toType) {
+    throw new KernelError(
+      "invalid_input",
+      `${input.relation} requires ${fromType} to ${toType}`,
+    );
+  }
 }
 
 function mapReceipt(row: ReceiptDbRow): ExecutionReceipt {
@@ -1968,6 +2685,9 @@ export function operationEvidence(result: unknown): JsonValue {
   if (isEffectRecord(result)) {
     return { effectIds: [result.effectId], machineIds: [result.instanceId] };
   }
+  if (isLineageEdgeRecord(result)) {
+    return { lineageEdgeIds: [result.edgeId] };
+  }
   if (isMachineRecord(result)) {
     return { machineIds: [result.instanceId] };
   }
@@ -2011,7 +2731,18 @@ function isEffectRecord(value: unknown): value is EffectRecord {
   );
 }
 
-function isMachineRecord(value: unknown): value is MachineRecord {
+function isLineageEdgeRecord(value: unknown): value is LineageEdgeRecord {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    "edgeId" in value &&
+    "relation" in value
+  );
+}
+
+function isMachineRecord(
+  value: unknown,
+): value is MachineRecord | WorkflowRecord {
   return (
     value !== null &&
     typeof value === "object" &&
