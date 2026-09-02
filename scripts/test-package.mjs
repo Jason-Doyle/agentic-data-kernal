@@ -21,7 +21,9 @@ try {
     capture: true,
   });
   const packResults = JSON.parse(packOutput);
-  const packageResult = packResults[0];
+  const packageResult = Array.isArray(packResults)
+    ? packResults[0]
+    : Object.values(packResults)[0];
   if (!packageResult?.filename || !Array.isArray(packageResult.files)) {
     throw new Error("npm pack did not return a package manifest");
   }
