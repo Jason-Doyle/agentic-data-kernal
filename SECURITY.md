@@ -38,7 +38,7 @@ issue.
 
 ## Security properties
 
-- API tokens are high-entropy values stored only as peppered HMAC-SHA256
+- API tokens are high-entropy values stored only as peppered scrypt-derived
   hashes.
 - Tenant and principal identity come from the authenticated API key.
 - PostgreSQL forced row-level security enforces tenant isolation.

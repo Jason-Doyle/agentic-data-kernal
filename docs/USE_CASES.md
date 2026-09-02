@@ -153,7 +153,7 @@ telemetry systems and deployment platforms are application adapters.
 The PostgreSQL profile currently exposes a bounded payment-capture workflow
 through:
 
-- high-entropy API keys stored as peppered hashes;
+- high-entropy API keys stored as peppered scrypt-derived hashes;
 - operation scopes;
 - approved purposes;
 - expiry and revocation;
