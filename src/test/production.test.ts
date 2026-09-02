@@ -2250,6 +2250,7 @@ async function testProductionMcp(
   try {
     const tools = await client.listTools();
     assert.ok(tools.tools.some((tool) => tool.name === "execute_operation"));
+    assert.ok(tools.tools.some((tool) => tool.name === "explain_trace"));
     assert.ok(
       !tools.tools.some((tool) => tool.name === "record_payment_outcome"),
     );

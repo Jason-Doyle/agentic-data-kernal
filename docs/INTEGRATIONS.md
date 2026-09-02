@@ -305,7 +305,7 @@ remediation, simulates an applied rollback with a timed-out response, restarts
 the runtime, reconciles provider state, and stores verification. Full setup and
 expected output are in [SRE_SCENARIO.md](SRE_SCENARIO.md). Run it against a
 dedicated empty database because it uses an explicitly synthetic embedding
-space.
+space. The command also renders the effect-centered causal explanation.
 
 ## Custom effect transports
 

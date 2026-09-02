@@ -58,6 +58,13 @@ test(
       assert.equal(result.agentRestarts, 2);
       assert.equal(result.errorRateBefore, 0.42);
       assert.equal(result.errorRateAfter, 0.03);
+      assert.ok(result.traceNodeCount >= 10);
+      assert.ok(result.traceEdgeCount >= 10);
+      assert.match(result.explanation, /deployment\.rollback effect succeeded/);
+      assert.match(result.explanation, /attempt 1: unknown/);
+      assert.match(result.explanation, /attempt 2: succeeded/);
+      assert.match(result.explanation, /decision remediation/);
+      assert.match(result.explanation, /observation error_rate/);
 
       const database = new ProductionDatabase({
         ...config,

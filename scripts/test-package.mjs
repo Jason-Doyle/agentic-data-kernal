@@ -98,7 +98,11 @@ try {
   const smokeModule = join(installDirectory, "smoke.mjs");
   writeFileSync(
     smokeModule,
-    `import { AgenticKernel, SqliteStore } from "agentic-data-kernel";
+    `import {
+  AgenticKernel,
+  SqliteStore,
+  formatTraceExplanation,
+} from "agentic-data-kernel";
 import {
   OpenAiCompatibleEmbeddingProvider,
   postgresMigrationDirectory,
@@ -114,6 +118,9 @@ try {
   }
   if (typeof OpenAiCompatibleEmbeddingProvider !== "function") {
     throw new Error("Production package export is unavailable");
+  }
+  if (typeof formatTraceExplanation !== "function") {
+    throw new Error("Trace formatter export is unavailable");
   }
   if (
     !existsSync(join(postgresMigrationDirectory, "001_core.sql")) ||
@@ -135,7 +142,11 @@ try {
   const typeConfig = join(installDirectory, "tsconfig.json");
   writeFileSync(
     typeSmokeModule,
-    `import { AgenticKernel, SqliteStore } from "agentic-data-kernel";
+    `import {
+  AgenticKernel,
+  SqliteStore,
+  formatTraceExplanation,
+} from "agentic-data-kernel";
 import {
   type EmbeddingSpace,
   ProductionDatabase,
@@ -144,6 +155,7 @@ import {
 
 const store = new SqliteStore(":memory:");
 const kernel: AgenticKernel = new AgenticKernel(store);
+const formatter: typeof formatTraceExplanation = formatTraceExplanation;
 const databaseType: typeof ProductionDatabase = ProductionDatabase;
 const migrationPath: string = postgresMigrationDirectory;
 const embeddingSpace: EmbeddingSpace = {
@@ -152,6 +164,7 @@ const embeddingSpace: EmbeddingSpace = {
   dimensions: 768,
 };
 void kernel;
+void formatter;
 void databaseType;
 void migrationPath;
 void embeddingSpace;
