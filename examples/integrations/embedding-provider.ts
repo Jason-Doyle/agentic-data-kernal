@@ -6,6 +6,7 @@ const provider = new OpenAiCompatibleEmbeddingProvider(
   process.env.EMBEDDING_MODEL ?? "text-embedding-3-small",
   Number(process.env.EMBEDDING_DIMENSIONS ?? "1536"),
   Number(process.env.EMBEDDING_TIMEOUT_MS ?? "30000"),
+  process.env.EMBEDDING_VERSION ?? "openai-compatible-v1",
 );
 
 const [embedding] = await provider.embed([
@@ -19,6 +20,7 @@ console.log(
   JSON.stringify(
     {
       model: provider.model,
+      version: provider.version,
       dimensions: embedding.length,
       finite: embedding.every(Number.isFinite),
     },

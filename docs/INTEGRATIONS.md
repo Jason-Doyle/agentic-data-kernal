@@ -144,6 +144,7 @@ Set:
 EMBEDDING_BASE_URL=https://provider.example/v1
 EMBEDDING_API_KEY=<provider-key>
 EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_VERSION=openai-compatible-v1
 EMBEDDING_DIMENSIONS=1536
 ```
 
@@ -155,6 +156,15 @@ npm run example:embedding
 
 The example prints the model, vector dimensions, and finite-value check without
 printing the vector.
+
+`EMBEDDING_VERSION` identifies the semantic space independently of the provider
+protocol. Change it when a provider changes model weights or preprocessing
+without changing the model name.
+
+Dimensions are configurable from 1 to 2000, matching pgvector's HNSW limit for
+single-precision vectors. The model must actually return the configured number
+of finite values. Zero vectors are rejected because cosine distance is
+undefined for them.
 
 ### Development protocol helper
 

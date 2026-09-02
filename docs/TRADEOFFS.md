@@ -129,7 +129,10 @@ application database.
 - The release is alpha.
 - The included deployment uses one PostgreSQL primary.
 - The default rate limiter is process-local.
-- Embeddings are fixed at 1536 dimensions.
+- One embedding space is active per deployment.
+- HNSW-indexed vectors are limited to 2000 dimensions.
+- Model or dimension changes require explicit re-embedding once assertions
+  exist.
 - The exposed durable workflow is currently retail order and payment focused.
 - Projection epochs and multi-operation plans are not implemented.
 
@@ -177,7 +180,8 @@ Before adopting the kernel, answer:
 3. How long must evidence, history, and receipts be retained?
 4. Which external actions require budgets or approval?
 5. Can every effect receiver honor a stable idempotency key?
-6. Is a 1536-dimensional embedding provider acceptable?
+6. Which embedding model, version, and dimension meet the workload's quality
+   and cost targets?
 7. Is a single-primary PostgreSQL deployment sufficient?
 8. Which comparative metric would justify the added complexity?
 

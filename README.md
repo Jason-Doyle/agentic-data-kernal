@@ -27,7 +27,8 @@ single governed system. It is designed for applications that need to answer:
 - Bitemporal assertions with evidence, epistemic kind, perspective, and typed
   uncertainty
 - Explicit `known`, `unknown`, and `conflicted` resolution results
-- Hybrid lexical, vector, relational, graph, and temporal retrieval
+- Bounded lexical and HNSW vector candidates with graph and temporal reranking
+- Versioned embedding spaces configurable up to 2000 indexed dimensions
 - Durable workflow state, timers, idempotency, and execution receipts
 - Transactional inventory reservations and payment effect intents
 - Scoped API keys, purpose binding, and PostgreSQL row-level security
@@ -216,7 +217,7 @@ Setup, environment variables, and receiver contracts are documented in
 Requirements:
 
 - Docker with Compose
-- An OpenAI-compatible 1536-dimensional embedding endpoint
+- An OpenAI-compatible embedding endpoint
 - Generated database, authentication, and artifact-encryption secrets
 
 Use the versioned production image:
@@ -241,6 +242,8 @@ The included deployment:
 
 - creates a non-superuser runtime database role;
 - applies checksum-verified migrations separately;
+- configures one indexed embedding space from the selected provider model,
+  version, and dimensions;
 - initializes artifact-directory ownership;
 - runs the API and effect worker independently;
 - publishes only the Caddy TLS endpoint;
@@ -326,7 +329,10 @@ HTTP / MCP / TypeScript / CLI
 
 - The included deployment uses one PostgreSQL primary.
 - The default rate limiter is process-local.
-- The vector schema currently requires 1536-dimensional embeddings.
+- One embedding model, version, and dimension is active per deployment.
+- HNSW-indexed vectors are limited to 2000 dimensions.
+- Changing the active embedding space after assertions exist requires an
+  explicit re-embedding migration.
 - Effect receivers must honor idempotency keys.
 - Projection epochs, multi-operation plans, and context-package optimization
   are not yet implemented.

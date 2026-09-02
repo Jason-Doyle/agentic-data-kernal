@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Made the PostgreSQL embedding model, version, and indexed dimensions
+  deployment-configurable up to 2000 dimensions.
+- Reworked hybrid search to retrieve bounded HNSW and full-text candidates
+  before temporal, graph, and combined-score reranking.
+- Added database enforcement for one active embedding space and upgrade-safe
+  migration of existing 1536-dimensional assertions.
+
 ## 0.2.0-alpha.1
 
 - Added a PostgreSQL 18 and pgvector production profile.

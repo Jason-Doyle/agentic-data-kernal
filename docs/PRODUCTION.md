@@ -23,6 +23,8 @@ allowlisted HTTPS receivers
 
 The runtime role is `agentic_app`. It is not a superuser and does not have
 `BYPASSRLS`. Migrations run separately as the PostgreSQL administrator.
+External PostgreSQL deployments require pgvector 0.8.0 or newer. The included
+Compose profile pins pgvector 0.8.6.
 
 ## Choose an image
 
@@ -59,7 +61,7 @@ Generate local secrets:
 ```
 
 Copy `.env.example` to `.env`, replace every placeholder, and configure an
-OpenAI-compatible 1536-dimensional embeddings endpoint.
+OpenAI-compatible embeddings endpoint.
 
 The `prod:*` npm scripts load `.env` through Node's `--env-file` option.
 
@@ -202,9 +204,52 @@ The production profile calls:
 POST <EMBEDDING_BASE_URL>/embeddings
 ```
 
-It sends the configured model, input list, and 1536 dimensions. Provider errors,
+It sends the configured model, input list, and dimensions. Provider errors,
 timeouts, invalid result counts, and dimension mismatches fail the operation.
 There is no hash-vector fallback.
+
+Configure one active embedding space:
+
+```text
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_VERSION=openai-compatible-v1
+EMBEDDING_DIMENSIONS=1536
+```
+
+`EMBEDDING_DIMENSIONS` accepts 1 through 2000, the HNSW limit for pgvector's
+single-precision `vector` type. Migrations create a matching expression index
+such as `assertions_embedding_hnsw_768`.
+
+Every provider result must contain the configured number of finite values.
+Zero vectors are rejected because they cannot participate in cosine search.
+
+The database enforces one model, version, and dimension across all assertions.
+Once assertions exist, changing any of those values is rejected. A model change
+requires an explicit re-embedding migration so vectors from different semantic
+spaces are never compared.
+
+Hybrid retrieval first collects bounded vector and full-text candidate sets,
+then applies temporal validity, graph scope, and combined-score reranking.
+Candidate selection keeps those same validity and graph constraints inside the
+indexed scans to preserve current-state and graph-filter behavior.
+
+Tune retrieval with:
+
+```text
+SEARCH_CANDIDATE_LIMIT=200
+HNSW_EF_SEARCH=100
+HNSW_MAX_SCAN_TUPLES=20000
+```
+
+Larger values can improve recall under selective tenant, temporal, or graph
+filters at the cost of latency and memory. `SEARCH_CANDIDATE_LIMIT` should
+remain several times larger than the requested result limit.
+
+Upgrading an existing 1536-dimensional database preserves its vectors and
+records their current model and version as the active space. Migration 002
+refuses databases that contain multiple spaces or zero vectors. The column
+conversion and index replacement require a maintenance window on large
+assertion tables.
 
 Artifact plaintext may be sent to the configured provider when an assertion
 uses that artifact as evidence. Use an approved private endpoint when the data
