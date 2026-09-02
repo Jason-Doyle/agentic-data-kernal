@@ -18,6 +18,8 @@
   integration examples.
 - Added API, integration, use case, support, contribution, and community
   documentation.
+- Added an adoption guide covering demonstrated benefits, unproven benefits,
+  operational costs, alternatives, and poor-fit scenarios.
 - Added Node and PostgreSQL CI, CodeQL analysis, and dependency update
   configuration.
 

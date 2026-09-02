@@ -3,6 +3,9 @@
 Agentic Data Kernel is intended for applications where knowledge changes over
 time and software agents can influence durable business state.
 
+For adoption criteria and costs, see
+[Benefits and tradeoffs](TRADEOFFS.md).
+
 ## Support levels
 
 | Level | Meaning |

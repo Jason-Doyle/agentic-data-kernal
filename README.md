@@ -255,6 +255,7 @@ HTTP / MCP / TypeScript / CLI
 ## Documentation
 
 - [Use cases](docs/USE_CASES.md)
+- [Benefits and tradeoffs](docs/TRADEOFFS.md)
 - [Integration guide](docs/INTEGRATIONS.md)
 - [API reference](docs/API.md)
 - [Production profile](docs/PRODUCTION.md)
