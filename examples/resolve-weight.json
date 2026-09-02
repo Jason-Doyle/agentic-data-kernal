@@ -1,0 +1,15 @@
+{
+  "protocolVersion": "0.1",
+  "requestId": "example-resolve-weight",
+  "principal": {
+    "tenantId": "example-retail",
+    "principalId": "catalog-reviewer",
+    "purpose": "catalog-review"
+  },
+  "operation": {
+    "op": "resolve",
+    "subjectEntityId": "product:sku-17",
+    "predicate": "packaged_weight",
+    "policy": "none"
+  }
+}

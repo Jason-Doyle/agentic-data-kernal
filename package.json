@@ -1,0 +1,37 @@
+{
+  "name": "agentic-data-kernel",
+  "version": "0.1.0",
+  "description": "Local-first epistemic state and workflow kernel for AI agents",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "agentic-data": "dist/cli.js"
+  },
+  "files": [
+    "dist/*.js",
+    "dist/*.js.map",
+    "dist/*.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --no-warnings --test \"dist/test/*.test.js\"",
+    "demo": "npm run build && node --no-warnings dist/cli.js demo --db .data/demo.db",
+    "serve": "npm run build && node --no-warnings dist/cli.js serve --db .data/agentic.db",
+    "mcp": "npm run build && node --no-warnings dist/cli.js mcp --db .data/agentic.db"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}

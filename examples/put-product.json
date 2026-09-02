@@ -1,0 +1,18 @@
+{
+  "protocolVersion": "0.1",
+  "requestId": "example-put-product",
+  "idempotencyKey": "example-put-product",
+  "principal": {
+    "tenantId": "example-retail",
+    "principalId": "catalog-agent",
+    "purpose": "catalog-ingestion"
+  },
+  "operation": {
+    "op": "put_entity",
+    "entity": {
+      "entityId": "product:sku-17",
+      "entityType": "product",
+      "canonicalName": "Trail Camera Pro"
+    }
+  }
+}

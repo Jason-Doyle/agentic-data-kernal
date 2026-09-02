@@ -1,0 +1,29 @@
+{
+  "protocolVersion": "0.1",
+  "requestId": "example-assert-weight",
+  "idempotencyKey": "example-assert-weight",
+  "principal": {
+    "tenantId": "example-retail",
+    "principalId": "catalog-agent",
+    "purpose": "catalog-ingestion"
+  },
+  "operation": {
+    "op": "assert",
+    "assertion": {
+      "assertionId": "assertion:example-weight",
+      "subjectEntityId": "product:sku-17",
+      "predicate": "packaged_weight",
+      "object": {
+        "type": "number",
+        "value": 4.8,
+        "unit": "kg"
+      },
+      "kind": "reported_fact",
+      "strength": {
+        "type": "rank",
+        "value": "normal"
+      },
+      "authority": 70
+    }
+  }
+}
