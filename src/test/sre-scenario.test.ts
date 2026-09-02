@@ -7,11 +7,58 @@ import test from "node:test";
 import { Client } from "pg";
 import type { ProductionConfig } from "../production/config.js";
 import { ProductionDatabase } from "../production/database.js";
-import { runSreScenario } from "../production/sre-scenario.js";
+import {
+  runSreScenario,
+  SyntheticRemediationTransport,
+} from "../production/sre-scenario.js";
 
 const databaseUrl = process.env.PRODUCTION_TEST_DATABASE_URL;
 const migrationDatabaseUrl =
   process.env.PRODUCTION_TEST_MIGRATION_DATABASE_URL;
+
+test("synthetic remediation validates delivery and reconciliation identity", async () => {
+  const transport = new SyntheticRemediationTransport();
+  await assert.rejects(
+    transport.deliver({
+      effectId: "effect:invalid",
+      authorizationFence: "fence:invalid",
+      idempotencyKey: "rollback-api-v42-test",
+      targetUrl: "https://deployments.example.com/wrong",
+      request: { service: "checkout-api", deployment: "api-v42" },
+    }),
+    /invalid rollback/,
+  );
+  assert.equal(transport.deliveryCount, 0);
+
+  await transport.deliver({
+    effectId: "effect:test",
+    authorizationFence: "fence:test",
+    idempotencyKey: "rollback-api-v42-test",
+    targetUrl: "https://deployments.example.com/rollback",
+    request: { service: "checkout-api", deployment: "api-v42" },
+  });
+  await assert.rejects(
+    transport.reconcile({
+      effectId: "effect:test",
+      authorizationFence: "fence:wrong",
+      idempotencyKey: "rollback-api-v42-test",
+      statusUrl: "https://deployments.example.com/status/rollback",
+    }),
+    /was not applied/,
+  );
+  assert.equal(transport.reconciliationCount, 0);
+
+  const result = await transport.reconcile({
+    effectId: "effect:test",
+    authorizationFence: "fence:test",
+    idempotencyKey: "rollback-api-v42-test",
+    statusUrl: "https://deployments.example.com/status/rollback",
+  });
+  assert.equal(result.status, "succeeded");
+  assert.equal(transport.deliveryCount, 1);
+  assert.equal(transport.reconciliationCount, 1);
+  assert.equal(transport.errorRate, 0.03);
+});
 
 test(
   "flagship SRE scenario survives restart and ambiguous remediation",

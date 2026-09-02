@@ -99,6 +99,57 @@ async function auditKernel(
        (
          EXISTS (
            SELECT 1
+           FROM agentic.assertions assertion
+           JOIN agentic.artifacts artifact
+             ON artifact.tenant_id = assertion.tenant_id
+            AND artifact.artifact_id = assertion.source_artifact_id
+           WHERE assertion.tenant_id = $1
+             AND assertion.assertion_id = $6
+             AND assertion.predicate = 'deployed_version'
+             AND assertion.kind = 'observation'
+             AND assertion.object_json =
+               '{"type":"string","value":"api-v42"}'::JSONB
+             AND assertion.system_to IS NULL
+             AND artifact.artifact_id = $18
+             AND artifact.source_identity =
+               'synthetic-deployment-events'
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM agentic.assertions assertion
+           JOIN agentic.artifacts artifact
+             ON artifact.tenant_id = assertion.tenant_id
+            AND artifact.artifact_id = assertion.source_artifact_id
+           WHERE assertion.tenant_id = $1
+             AND assertion.assertion_id = $10
+             AND assertion.predicate = 'database_cpu_change'
+             AND assertion.kind = 'observation'
+             AND assertion.object_json =
+               '{"type":"number","value":0.12}'::JSONB
+             AND assertion.system_to IS NULL
+             AND artifact.artifact_id = $19
+             AND artifact.source_identity =
+               'synthetic-database-metrics'
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM agentic.lineage_edges
+           WHERE tenant_id = $1
+             AND relation = 'evidence_for'
+             AND from_artifact_id = $18
+             AND to_assertion_id = $6
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM agentic.lineage_edges
+           WHERE tenant_id = $1
+             AND relation = 'evidence_for'
+             AND from_artifact_id = $19
+             AND to_assertion_id = $10
+         )
+         AND
+         EXISTS (
+           SELECT 1
            FROM agentic.assertions
            WHERE tenant_id = $1
              AND assertion_id = $7
@@ -408,6 +459,8 @@ async function auditKernel(
       providerReference,
       verificationAssertionId,
       `artifact:verification:${runId}`,
+      `artifact:deployment:${runId}`,
+      `artifact:database:${runId}`,
     ],
   );
   const value = audit.rows[0];

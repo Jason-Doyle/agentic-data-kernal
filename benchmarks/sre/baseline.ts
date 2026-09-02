@@ -289,6 +289,25 @@ async function auditBaseline(
        (
          EXISTS (
            SELECT 1
+           FROM observations
+           WHERE observation_id = 'obs:deploy'
+             AND incident_id = $1
+             AND predicate = 'deployed_version'
+             AND value = '"api-v42"'::JSONB
+             AND source = 'deployments'
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM observations
+           WHERE observation_id = 'obs:db'
+             AND incident_id = $1
+             AND predicate = 'database_cpu_change'
+             AND value = '0.12'::JSONB
+             AND source = 'database'
+         )
+         AND
+         EXISTS (
+           SELECT 1
            FROM hypotheses
            WHERE hypothesis_id = 'hyp:deploy:v1'
              AND incident_id = $1

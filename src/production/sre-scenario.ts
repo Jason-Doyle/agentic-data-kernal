@@ -833,6 +833,11 @@ export class SyntheticRemediationTransport
   public errorRate = 0.42;
   public providerReference = "";
   private applied = false;
+  private deliveredEffect: {
+    effectId: string;
+    authorizationFence: string;
+    idempotencyKey: string;
+  } | null = null;
 
   public async deliver(effect: {
     effectId: string;
@@ -845,8 +850,24 @@ export class SyntheticRemediationTransport
     responseStatus: null;
     outcome: JsonValue;
   }> {
+    if (
+      effect.targetUrl !== "https://deployments.example.com/rollback" ||
+      !effect.effectId ||
+      !effect.authorizationFence ||
+      !/^rollback-api-v42-[A-Za-z0-9_-]{1,64}$/.test(
+        effect.idempotencyKey,
+      ) ||
+      !isRollbackRequest(effect.request)
+    ) {
+      throw new Error("Synthetic remediation received an invalid rollback");
+    }
     this.deliveryCount += 1;
     this.applied = true;
+    this.deliveredEffect = {
+      effectId: effect.effectId,
+      authorizationFence: effect.authorizationFence,
+      idempotencyKey: effect.idempotencyKey,
+    };
     this.errorRate = 0.03;
     this.providerReference = `synthetic-rollback-${effect.effectId}`;
     return {
@@ -859,21 +880,46 @@ export class SyntheticRemediationTransport
     };
   }
 
-  public async reconcile(): Promise<{
+  public async reconcile(effect: {
+    effectId: string;
+    authorizationFence: string;
+    idempotencyKey: string;
+    statusUrl: string;
+  }): Promise<{
     status: "succeeded";
     responseStatus: 200;
     outcome: JsonValue;
   }> {
-    this.reconciliationCount += 1;
-    if (!this.applied) {
+    if (
+      !this.applied ||
+      !this.deliveredEffect ||
+      effect.effectId !== this.deliveredEffect.effectId ||
+      effect.authorizationFence !==
+        this.deliveredEffect.authorizationFence ||
+      effect.idempotencyKey !== this.deliveredEffect.idempotencyKey ||
+      effect.statusUrl !==
+        "https://deployments.example.com/status/rollback"
+    ) {
       throw new Error("Cannot reconcile a remediation that was not applied");
     }
+    this.reconciliationCount += 1;
     return {
       status: "succeeded",
       responseStatus: 200,
       outcome: { providerReference: this.providerReference },
     };
   }
+}
+
+function isRollbackRequest(value: JsonValue): boolean {
+  return (
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof value === "object" &&
+    Object.keys(value).length === 2 &&
+    value.service === "checkout-api" &&
+    value.deployment === "api-v42"
+  );
 }
 
 function normalizeRunId(value: string): string {
