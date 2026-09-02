@@ -65,11 +65,41 @@ The PostgreSQL profile targets bounded single-primary deployments. See
 [docs/PRODUCTION.md](docs/PRODUCTION.md) before exposing it outside a trusted
 environment.
 
-## Quick start
+## Install
+
+Install the TypeScript library:
+
+```powershell
+npm install agentic-data-kernel@next
+```
+
+Run the embedded example without cloning the repository:
+
+```powershell
+npx --yes agentic-data-kernel@next example --db .data\example.db
+```
+
+Published prereleases use the npm `next` tag. Production applications should
+pin an exact package version.
+
+```ts
+import { AgenticKernel, SqliteStore } from "agentic-data-kernel";
+
+const store = new SqliteStore(".data/app.db");
+const kernel = new AgenticKernel(store);
+```
+
+The npm package provides:
+
+- `agentic-data-kernel` and `agentic-data` for the embedded CLI;
+- `agentic-data-prod` for production administration and runtime commands;
+- `agentic-data-kernel/production` for PostgreSQL integrations.
+
+## Source quick start
 
 Requirements:
 
-- Node.js 22.5 or newer
+- Node.js 22.19 or newer
 - npm 10 or newer
 
 ```powershell
@@ -144,7 +174,13 @@ The development server is loopback-only and has no network SQL route.
 
 ## MCP
 
-Start the development MCP server:
+Start the development MCP server from a published package:
+
+```powershell
+npx --yes agentic-data-kernel@next mcp --db .data\agentic.db
+```
+
+Or start it from a source checkout:
 
 ```powershell
 npm run mcp
@@ -182,6 +218,18 @@ Requirements:
 - Docker with Compose
 - An OpenAI-compatible 1536-dimensional embedding endpoint
 - Generated database, authentication, and artifact-encryption secrets
+
+Use the versioned production image:
+
+```powershell
+Copy-Item .env.example .env
+.\scripts\generate-secrets.ps1
+$env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:0.2.0-alpha.1"
+docker compose --profile server pull
+docker compose --profile server up --no-build
+```
+
+Or build the image from the checked-out source:
 
 ```powershell
 Copy-Item .env.example .env
@@ -266,6 +314,7 @@ HTTP / MCP / TypeScript / CLI
 - [Integration guide](docs/INTEGRATIONS.md)
 - [API reference](docs/API.md)
 - [Production profile](docs/PRODUCTION.md)
+- [Release process](docs/RELEASING.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)

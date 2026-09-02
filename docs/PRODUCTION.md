@@ -24,6 +24,32 @@ allowlisted HTTPS receivers
 The runtime role is `agentic_app`. It is not a superuser and does not have
 `BYPASSRLS`. Migrations run separately as the PostgreSQL administrator.
 
+## Choose an image
+
+Production releases are published as:
+
+```text
+ghcr.io/jason-doyle/agentic-data-kernel:<version>
+```
+
+Set `AGENTIC_DATA_IMAGE` to an exact version in `.env`. The same image runs the
+migration command, HTTP service, effect worker, and production MCP process.
+Prereleases also receive the moving `next` tag, but production deployments
+should not rely on it.
+
+To use the published image:
+
+```powershell
+docker compose --profile server pull
+docker compose --profile server up --no-build
+```
+
+To build the checked-out source instead:
+
+```powershell
+docker compose --profile server up --build
+```
+
 ## Initial setup
 
 Generate local secrets:
@@ -67,11 +93,14 @@ The token is shown once. Store it in a secret manager.
 
 ## Run
 
-Run the HTTP service and effect worker together:
+Run the HTTP service and effect worker together from source:
 
 ```powershell
 docker compose --profile server up --build
 ```
+
+For a pinned published image, omit `--build` and use the commands in
+[Choose an image](#choose-an-image).
 
 The Compose profile publishes only the Caddy TLS endpoint at
 `https://localhost:8443`. The Node.js service remains private on the Compose

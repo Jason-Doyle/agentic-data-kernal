@@ -3,6 +3,16 @@
 The repository includes runnable examples for the library, HTTP API, MCP,
 embedding providers, effect receivers, and the retail workflow.
 
+## Install
+
+Use the prerelease distribution tag for evaluation:
+
+```powershell
+npm install agentic-data-kernel@next
+```
+
+Pin an exact version in applications and production deployments.
+
 ## Example index
 
 | Integration | File | Command |
@@ -65,6 +75,28 @@ const result = executeIntent(kernel, {
 The SQLite profile is intended for local and single-process use.
 
 ## MCP client
+
+An MCP client can launch the published embedded server directly:
+
+```json
+{
+  "mcpServers": {
+    "agentic-data": {
+      "command": "npx",
+      "args": [
+        "--yes",
+        "agentic-data-kernel@next",
+        "mcp",
+        "--db",
+        ".data/agentic.db"
+      ]
+    }
+  }
+}
+```
+
+On Windows, clients that do not resolve command shims may require `npx.cmd`.
+Pin an exact package version when reproducibility matters.
 
 The MCP example starts the development MCP process over stdio, creates a
 service entity, stores an ownership assertion, and resolves it through the

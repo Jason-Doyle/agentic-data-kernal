@@ -31,6 +31,7 @@ export {
   assertMigrationsApplied,
   migratePostgres,
   migrationStatus,
+  postgresMigrationDirectory,
 } from "./migrations.js";
 export { EncryptedArtifactStore } from "./artifacts.js";
 export { reconcileArtifactFiles } from "./artifact-reconciliation.js";

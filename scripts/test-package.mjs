@@ -1,0 +1,218 @@
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+let archivePath;
+let installDirectory;
+
+try {
+  const packOutput = runNpm(["pack", "--json"], {
+    cwd: projectRoot,
+    capture: true,
+  });
+  const packResults = JSON.parse(packOutput);
+  const packageResult = packResults[0];
+  if (!packageResult?.filename || !Array.isArray(packageResult.files)) {
+    throw new Error("npm pack did not return a package manifest");
+  }
+
+  archivePath = resolve(projectRoot, packageResult.filename);
+  const packagedPaths = new Set(
+    packageResult.files.map((entry) => entry.path),
+  );
+  for (const requiredPath of [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/production/index.js",
+    "dist/production/index.d.ts",
+    "migrations/postgres/001_core.sql",
+    "README.md",
+    "LICENSE",
+  ]) {
+    if (!packagedPaths.has(requiredPath)) {
+      throw new Error(`Package is missing ${requiredPath}`);
+    }
+  }
+  for (const forbiddenPath of [
+    ".env",
+    "scripts/test-package.mjs",
+    "src/index.ts",
+  ]) {
+    if (packagedPaths.has(forbiddenPath)) {
+      throw new Error(`Package unexpectedly contains ${forbiddenPath}`);
+    }
+  }
+  if ([...packagedPaths].some((path) => path.startsWith("dist/test/"))) {
+    throw new Error("Package unexpectedly contains compiled tests");
+  }
+
+  installDirectory = mkdtempSync(join(tmpdir(), "agentic-data-package-"));
+  writeFileSync(
+    join(installDirectory, "package.json"),
+    JSON.stringify({ name: "agentic-data-package-smoke", private: true }),
+  );
+  runNpm(
+    [
+      "install",
+      archivePath,
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+    ],
+    { cwd: installDirectory },
+  );
+
+  const installedPackage = join(
+    installDirectory,
+    "node_modules",
+    "agentic-data-kernel",
+  );
+  const installedManifest = JSON.parse(
+    readFileSync(join(installedPackage, "package.json"), "utf8"),
+  );
+  for (const binary of [
+    "agentic-data",
+    "agentic-data-kernel",
+    "agentic-data-prod",
+  ]) {
+    if (!installedManifest.bin?.[binary]) {
+      throw new Error(`Installed package is missing the ${binary} binary`);
+    }
+  }
+
+  const smokeModule = join(installDirectory, "smoke.mjs");
+  writeFileSync(
+    smokeModule,
+    `import { AgenticKernel, SqliteStore } from "agentic-data-kernel";
+import {
+  OpenAiCompatibleEmbeddingProvider,
+  postgresMigrationDirectory,
+} from "agentic-data-kernel/production";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+const store = new SqliteStore(":memory:");
+try {
+  const kernel = new AgenticKernel(store);
+  if (typeof kernel.catalog !== "function") {
+    throw new Error("Root package export is unavailable");
+  }
+  if (typeof OpenAiCompatibleEmbeddingProvider !== "function") {
+    throw new Error("Production package export is unavailable");
+  }
+  if (!existsSync(join(postgresMigrationDirectory, "001_core.sql"))) {
+    throw new Error("Packaged PostgreSQL migrations are unavailable");
+  }
+} finally {
+  store.close();
+}
+`,
+  );
+  run(process.execPath, ["--no-warnings", smokeModule], {
+    cwd: installDirectory,
+  });
+
+  const typeSmokeModule = join(installDirectory, "smoke.mts");
+  const typeConfig = join(installDirectory, "tsconfig.json");
+  writeFileSync(
+    typeSmokeModule,
+    `import { AgenticKernel, SqliteStore } from "agentic-data-kernel";
+import {
+  ProductionDatabase,
+  postgresMigrationDirectory,
+} from "agentic-data-kernel/production";
+
+const store = new SqliteStore(":memory:");
+const kernel: AgenticKernel = new AgenticKernel(store);
+const databaseType: typeof ProductionDatabase = ProductionDatabase;
+const migrationPath: string = postgresMigrationDirectory;
+void kernel;
+void databaseType;
+void migrationPath;
+store.close();
+`,
+  );
+  writeFileSync(
+    typeConfig,
+    JSON.stringify({
+      compilerOptions: {
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        noEmit: true,
+        skipLibCheck: false,
+        strict: true,
+        target: "ES2023",
+      },
+      include: ["smoke.mts"],
+    }),
+  );
+  const typescriptCli = join(
+    projectRoot,
+    "node_modules",
+    "typescript",
+    "bin",
+    "tsc",
+  );
+  if (!existsSync(typescriptCli)) {
+    throw new Error("TypeScript compiler is unavailable");
+  }
+  run(process.execPath, [typescriptCli, "--project", typeConfig], {
+    cwd: installDirectory,
+  });
+
+  for (const binary of ["agentic-data-kernel", "agentic-data-prod"]) {
+    runNpm(["exec", "--offline", "--", binary, "--help"], {
+      cwd: installDirectory,
+    });
+  }
+
+  console.log(
+    `Package smoke test passed for ${installedManifest.name}@${installedManifest.version}`,
+  );
+} finally {
+  if (archivePath) {
+    try {
+      unlinkSync(archivePath);
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+  if (installDirectory) {
+    rmSync(installDirectory, { recursive: true, force: true });
+  }
+}
+
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd,
+    encoding: "utf8",
+    stdio: options.capture ? ["ignore", "pipe", "inherit"] : "inherit",
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`${command} exited with status ${result.status}`);
+  }
+  return result.stdout ?? "";
+}
+
+function runNpm(args, options = {}) {
+  const npmCli = process.env.npm_execpath;
+  if (!npmCli) {
+    throw new Error("npm_execpath is unavailable");
+  }
+  return run(process.execPath, [npmCli, ...args], options);
+}

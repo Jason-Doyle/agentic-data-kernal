@@ -33,7 +33,19 @@ jobs:
       - run: npm run check
       - run: npm run build
       - run: npm test
-      - run: npm pack --dry-run
+      - run: npm run test:package
+
+  container:
+    name: Production container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate Compose configuration
+        run: docker compose --env-file .env.example config --quiet
+      - name: Build production image
+        run: docker build --tag agentic-data-kernel:test .
+      - name: Check production CLI
+        run: docker run --rm agentic-data-kernel:test node dist/production/cli.js --help
 
   postgres:
     name: PostgreSQL integration
