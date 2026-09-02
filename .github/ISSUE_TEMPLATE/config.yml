@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/Jason-Doyle/agentic-data-kernal/security/advisories/new
+    url: https://github.com/Jason-Doyle/agentic-data-kernel/security/advisories/new
     about: Report security issues privately
   - name: Support
-    url: https://github.com/Jason-Doyle/agentic-data-kernal/blob/main/SUPPORT.md
+    url: https://github.com/Jason-Doyle/agentic-data-kernel/blob/main/SUPPORT.md
     about: Read the support policy before opening an issue

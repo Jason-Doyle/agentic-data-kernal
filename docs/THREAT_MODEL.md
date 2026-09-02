@@ -48,6 +48,14 @@ Retrieved evidence is data, not policy. Agent operations still pass schema,
 scope, purpose, budget, and deterministic state checks. A retrieved assertion
 cannot grant authority.
 
+### Embedding space confusion
+
+Vectors from different models, model revisions, or dimensions are not compared.
+The database stores one active embedding configuration, validates every
+assertion against it, and denies runtime-role changes to that configuration.
+Changing the space after assertions exist requires an explicit re-embedding
+migration.
+
 ### Forged payment success
 
 The public intent API rejects payment outcome operations. Only the effect worker

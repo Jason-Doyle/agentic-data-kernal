@@ -1,5 +1,16 @@
 import * as z from "zod/v4";
 
+export const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
+export const DEFAULT_EMBEDDING_VERSION = "openai-compatible-v1";
+export const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
+export const MAX_INDEXED_VECTOR_DIMENSIONS = 2000;
+
+export interface EmbeddingSpace {
+  model: string;
+  version: string;
+  dimensions: number;
+}
+
 export interface EmbeddingProvider {
   readonly model: string;
   readonly version: string;
@@ -20,7 +31,6 @@ const responseSchema = z.object({
 export class OpenAiCompatibleEmbeddingProvider
   implements EmbeddingProvider
 {
-  public readonly version = "openai-compatible-v1";
   private readonly embeddingsUrl: string;
 
   public constructor(
@@ -29,7 +39,9 @@ export class OpenAiCompatibleEmbeddingProvider
     public readonly model: string,
     public readonly dimensions: number,
     private readonly timeoutMs: number,
+    public readonly version = DEFAULT_EMBEDDING_VERSION,
   ) {
+    validateEmbeddingSpace(this);
     const normalizedBaseUrl = baseUrl.endsWith("/")
       ? baseUrl
       : `${baseUrl}/`;
@@ -93,14 +105,9 @@ export class OpenAiCompatibleEmbeddingProvider
         if (ordered.length !== texts.length) {
           throw new Error("Embedding provider returned the wrong result count");
         }
-        return ordered.map((item) => {
-          if (item.embedding.length !== this.dimensions) {
-            throw new Error(
-              `Embedding dimension ${item.embedding.length} did not match ${this.dimensions}`,
-            );
-          }
-          return item.embedding;
-        });
+        return ordered.map((item) =>
+          validateEmbeddingVector(item.embedding, this.dimensions),
+        );
       } catch (error) {
         if (
           error instanceof Error &&
@@ -115,6 +122,55 @@ export class OpenAiCompatibleEmbeddingProvider
     }
     throw lastError ?? new Error("Embedding provider failed");
   }
+}
+
+export function embeddingSpace(
+  provider: Pick<EmbeddingProvider, "model" | "version" | "dimensions">,
+): EmbeddingSpace {
+  return validateEmbeddingSpace({
+    model: provider.model,
+    version: provider.version,
+    dimensions: provider.dimensions,
+  });
+}
+
+export function validateEmbeddingSpace(space: EmbeddingSpace): EmbeddingSpace {
+  const model = space.model.trim();
+  const version = space.version.trim();
+  if (!model) {
+    throw new Error("Embedding model must not be empty");
+  }
+  if (!version) {
+    throw new Error("Embedding version must not be empty");
+  }
+  if (
+    !Number.isInteger(space.dimensions) ||
+    space.dimensions < 1 ||
+    space.dimensions > MAX_INDEXED_VECTOR_DIMENSIONS
+  ) {
+    throw new Error(
+      `Embedding dimensions must be an integer from 1 to ${MAX_INDEXED_VECTOR_DIMENSIONS}`,
+    );
+  }
+  return { model, version, dimensions: space.dimensions };
+}
+
+export function validateEmbeddingVector(
+  values: number[],
+  dimensions: number,
+): number[] {
+  if (
+    values.length !== dimensions ||
+    !values.every(Number.isFinite)
+  ) {
+    throw new Error(
+      `Embedding must contain ${dimensions} finite values`,
+    );
+  }
+  if (!values.some((value) => value !== 0)) {
+    throw new Error("Cosine embeddings must not be zero vectors");
+  }
+  return values;
 }
 
 function delay(milliseconds: number): Promise<void> {

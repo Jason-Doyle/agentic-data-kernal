@@ -38,6 +38,7 @@ try {
     "dist/production/index.js",
     "dist/production/index.d.ts",
     "migrations/postgres/001_core.sql",
+    "migrations/postgres/002_embedding_space.sql",
     "README.md",
     "LICENSE",
   ]) {
@@ -112,7 +113,10 @@ try {
   if (typeof OpenAiCompatibleEmbeddingProvider !== "function") {
     throw new Error("Production package export is unavailable");
   }
-  if (!existsSync(join(postgresMigrationDirectory, "001_core.sql"))) {
+  if (
+    !existsSync(join(postgresMigrationDirectory, "001_core.sql")) ||
+    !existsSync(join(postgresMigrationDirectory, "002_embedding_space.sql"))
+  ) {
     throw new Error("Packaged PostgreSQL migrations are unavailable");
   }
 } finally {
@@ -130,6 +134,7 @@ try {
     typeSmokeModule,
     `import { AgenticKernel, SqliteStore } from "agentic-data-kernel";
 import {
+  type EmbeddingSpace,
   ProductionDatabase,
   postgresMigrationDirectory,
 } from "agentic-data-kernel/production";
@@ -138,9 +143,15 @@ const store = new SqliteStore(":memory:");
 const kernel: AgenticKernel = new AgenticKernel(store);
 const databaseType: typeof ProductionDatabase = ProductionDatabase;
 const migrationPath: string = postgresMigrationDirectory;
+const embeddingSpace: EmbeddingSpace = {
+  model: "test",
+  version: "1",
+  dimensions: 768,
+};
 void kernel;
 void databaseType;
 void migrationPath;
+void embeddingSpace;
 store.close();
 `,
   );

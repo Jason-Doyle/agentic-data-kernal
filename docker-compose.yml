@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg18
+    image: pgvector/pgvector:0.8.6-pg18-bookworm
     environment:
       POSTGRES_DB: agentic_data
       POSTGRES_USER: postgres
@@ -19,7 +19,7 @@ services:
       retries: 30
 
   bootstrap:
-    image: pgvector/pgvector:pg18
+    image: pgvector/pgvector:0.8.6-pg18-bookworm
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,6 +70,9 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/agentic_data
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_VERSION: ${EMBEDDING_VERSION:-openai-compatible-v1}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
     command:
       - node
       - dist/production/cli.js
@@ -106,6 +109,11 @@ services:
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_VERSION: ${EMBEDDING_VERSION:-openai-compatible-v1}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
+      SEARCH_CANDIDATE_LIMIT: ${SEARCH_CANDIDATE_LIMIT:-200}
+      HNSW_EF_SEARCH: ${HNSW_EF_SEARCH:-100}
+      HNSW_MAX_SCAN_TUPLES: ${HNSW_MAX_SCAN_TUPLES:-20000}
       EFFECT_ALLOWED_HOSTS: ${EFFECT_ALLOWED_HOSTS:-}
       HOST: 0.0.0.0
       PORT: 4318
@@ -148,6 +156,11 @@ services:
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_VERSION: ${EMBEDDING_VERSION:-openai-compatible-v1}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
+      SEARCH_CANDIDATE_LIMIT: ${SEARCH_CANDIDATE_LIMIT:-200}
+      HNSW_EF_SEARCH: ${HNSW_EF_SEARCH:-100}
+      HNSW_MAX_SCAN_TUPLES: ${HNSW_MAX_SCAN_TUPLES:-20000}
       EFFECT_ALLOWED_HOSTS: ${EFFECT_ALLOWED_HOSTS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:

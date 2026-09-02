@@ -9,13 +9,17 @@ import {
   type AuthenticatedPrincipal,
 } from "./auth.js";
 import { productionCatalog } from "./catalog.js";
-import type { ProductionConfig } from "./config.js";
+import {
+  configuredEmbeddingSpace,
+  type ProductionConfig,
+} from "./config.js";
 import {
   MaintenanceModeError,
   type ProductionDatabase,
 } from "./database.js";
 import type { ProductionKernel } from "./kernel.js";
 import type { MetricsRegistry } from "./metrics.js";
+import { embeddingSpaceStatus } from "./embedding-space.js";
 
 export interface ProductionHttpDependencies {
   config: ProductionConfig;
@@ -62,10 +66,18 @@ export async function startProductionHttpServer({
           `SELECT EXISTS (
              SELECT 1
              FROM agentic.schema_migrations
-             WHERE version = '001'
+             WHERE version = '002'
            ) AS applied`,
         );
-        const ready = healthy && migration.rows[0]?.applied === true;
+        const migrationsApplied = migration.rows[0]?.applied === true;
+        const embeddingStatus = migrationsApplied
+          ? await embeddingSpaceStatus(
+              database,
+              configuredEmbeddingSpace(config),
+            )
+          : null;
+        const ready =
+          healthy && migrationsApplied && embeddingStatus?.ready === true;
         sendJson(response, ready ? 200 : 503, {
           status: ready ? "ready" : "not_ready",
           requestId,
@@ -102,7 +114,11 @@ export async function startProductionHttpServer({
       }
 
       if (request.method === "GET" && url.pathname === "/v1/catalog") {
-        sendJson(response, 200, productionCatalog());
+        sendJson(
+          response,
+          200,
+          productionCatalog(configuredEmbeddingSpace(config)),
+        );
         return;
       }
       if (request.method === "POST" && url.pathname === "/v1/execute") {

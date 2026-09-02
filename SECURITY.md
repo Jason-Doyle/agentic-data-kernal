@@ -13,7 +13,7 @@ or container port.
 
 Use GitHub private vulnerability reporting for:
 
-<https://github.com/Jason-Doyle/agentic-data-kernal/security/advisories/new>
+<https://github.com/Jason-Doyle/agentic-data-kernel/security/advisories/new>
 
 Do not include credentials, customer data, or exploit details in a public
 issue.
@@ -27,6 +27,8 @@ issue.
   Compose profile uses Caddy and does not publish the Node.js listener.
 - Store API keys, the authentication pepper, artifact keys, database
   passwords, and embedding-provider credentials in a secret manager.
+- Keep embedding model, version, and dimensions aligned with the database
+  configuration. The runtime role can read but cannot alter that configuration.
 - Keep the artifact keyring available for every key ID referenced by retained
   artifacts.
 - Configure a narrow `EFFECT_ALLOWED_HOSTS` list.

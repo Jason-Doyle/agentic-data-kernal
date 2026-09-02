@@ -136,6 +136,12 @@ Search can combine:
 The PostgreSQL profile stores provider vectors in pgvector. The development
 profile uses deterministic feature vectors for local behavior only.
 
+The PostgreSQL profile retrieves bounded vector and lexical candidate sets
+through HNSW and full-text indexes before calculating final combined scores.
+Temporal, status, tenant, optional field, and graph constraints remain inside
+candidate selection so bounded retrieval does not reintroduce stale or
+out-of-scope rows.
+
 ## Retail workflow
 
 ```text

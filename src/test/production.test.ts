@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -8,6 +8,8 @@ import { createServer } from "node:http";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client as PgClient } from "pg";
+import { toSql as vectorToSql } from "pgvector";
 import type { AgentOperation } from "../ir.js";
 import type { JsonValue } from "../types.js";
 import {
@@ -16,10 +18,23 @@ import {
   type AuthenticatedPrincipal,
 } from "../production/auth.js";
 import { reconcileArtifactFiles } from "../production/artifact-reconciliation.js";
-import type { ProductionConfig } from "../production/config.js";
+import {
+  configuredEmbeddingSpace,
+  loadEmbeddingSpaceConfig,
+  type ProductionConfig,
+} from "../production/config.js";
 import { ProductionDatabase } from "../production/database.js";
+import {
+  assertEmbeddingSpaceConfigured,
+  configureEmbeddingSpace,
+  embeddingIndexName,
+  embeddingSpaceStatus,
+} from "../production/embedding-space.js";
 import type { EmbeddingProvider } from "../production/embeddings.js";
-import { OpenAiCompatibleEmbeddingProvider } from "../production/embeddings.js";
+import {
+  OpenAiCompatibleEmbeddingProvider,
+  validateEmbeddingVector,
+} from "../production/embeddings.js";
 import {
   EffectWorker,
   SecureHttpEffectTransport,
@@ -35,16 +50,250 @@ import {
 } from "../production/migrations.js";
 import { createProductionMcpServer } from "../production/mcp.js";
 import { EncryptedArtifactStore } from "../production/artifacts.js";
+import { buildHybridSearchQuery } from "../production/search.js";
 
 const databaseUrl = process.env.PRODUCTION_TEST_DATABASE_URL;
 const migrationDatabaseUrl =
   process.env.PRODUCTION_TEST_MIGRATION_DATABASE_URL;
 
 test("packaged migrations resolve relative to the module", () => {
+  const migrations = readdirSync(postgresMigrationDirectory);
+  assert.ok(migrations.includes("001_core.sql"));
+  assert.ok(migrations.includes("002_embedding_space.sql"));
+  const embeddingMigration = readFileSync(
+    join(postgresMigrationDirectory, "002_embedding_space.sql"),
+    "utf8",
+  );
   assert.ok(
-    readdirSync(postgresMigrationDirectory).includes("001_core.sql"),
+    embeddingMigration.indexOf("pgvector 0.8.0 or newer is required") <
+      embeddingMigration.indexOf(
+        "DROP INDEX agentic.assertions_embedding_hnsw",
+      ),
   );
 });
+
+test("embedding dimensions are validated as deployment configuration", () => {
+  assert.deepEqual(
+    loadEmbeddingSpaceConfig({
+      EMBEDDING_MODEL: "custom-model",
+      EMBEDDING_VERSION: "weights-2",
+      EMBEDDING_DIMENSIONS: "768",
+    }),
+    {
+      model: "custom-model",
+      version: "weights-2",
+      dimensions: 768,
+    },
+  );
+  assert.throws(
+    () =>
+      loadEmbeddingSpaceConfig({
+        EMBEDDING_DIMENSIONS: "2001",
+      }),
+    /2000/,
+  );
+  assert.throws(
+    () => validateEmbeddingVector([0, 0, 0], 3),
+    /must not be zero vectors/,
+  );
+});
+
+test(
+  "embedding migration preserves an existing 1536-dimensional space",
+  { skip: !databaseUrl || !migrationDatabaseUrl },
+  async () => {
+    assert.ok(databaseUrl);
+    assert.ok(migrationDatabaseUrl);
+    const databaseName = `agentic_upgrade_${randomUUID().replaceAll("-", "")}`;
+    const artifactDirectory = mkdtempSync(
+      join(tmpdir(), "agentic-data-embedding-upgrade-"),
+    );
+    const control = new PgClient({
+      connectionString: databaseUrlFor(migrationDatabaseUrl, "postgres"),
+    });
+    const adminUrl = databaseUrlFor(migrationDatabaseUrl, databaseName);
+    const appUrl = databaseUrlFor(databaseUrl, databaseName);
+    let controlConnected = false;
+    let databaseCreated = false;
+    let appDatabase: ProductionDatabase | null = null;
+    try {
+      await control.connect();
+      controlConnected = true;
+      await control.query(`CREATE DATABASE ${databaseName}`);
+      databaseCreated = true;
+
+      const source = readFileSync(
+        join(postgresMigrationDirectory, "001_core.sql"),
+        "utf8",
+      );
+      const checksum = createHash("sha256").update(source).digest("hex");
+      const adminDatabase = new ProductionDatabase(
+        testConfig(adminUrl, artifactDirectory),
+      );
+      try {
+        await adminDatabase.withSystemTransaction(async (client) => {
+          await client.query("CREATE SCHEMA IF NOT EXISTS agentic");
+          await client.query(
+            `CREATE TABLE agentic.schema_migrations (
+               version TEXT PRIMARY KEY,
+               file_name TEXT NOT NULL,
+               checksum TEXT NOT NULL,
+               applied_at TIMESTAMPTZ NOT NULL
+             )`,
+          );
+          await client.query(source);
+          await client.query(
+            `INSERT INTO agentic.schema_migrations (
+               version, file_name, checksum, applied_at
+             ) VALUES ('001', '001_core.sql', $1, clock_timestamp())`,
+            [checksum],
+          );
+        });
+      } finally {
+        await adminDatabase.close();
+      }
+
+      const config = testConfig(appUrl, artifactDirectory);
+      appDatabase = new ProductionDatabase(config);
+      const provider = new TestEmbeddingProvider();
+      const kernel = new ProductionKernel(
+        appDatabase,
+        new EncryptedArtifactStore(
+          artifactDirectory,
+          config.artifactKeyring,
+        ),
+        provider,
+        config,
+        new MetricsRegistry(),
+        createLogger(config),
+      );
+      const key = await createApiKey(appDatabase, config, {
+        tenantId: "upgrade-tenant",
+        tenantName: "Upgrade Tenant",
+        principalId: "upgrade-agent",
+        scopes: ["data:read", "data:write"],
+        purposes: ["test"],
+        effectBudgetCurrency: "USD",
+        effectBudgetLimit: "0",
+      });
+      const principal = await authenticateToken(
+        appDatabase,
+        config,
+        key.token,
+        "test",
+      );
+      await execute(kernel, principal, "upgrade-entity", {
+        op: "put_entity",
+        entity: {
+          entityId: "product:upgrade",
+          entityType: "product",
+          canonicalName: "Upgrade Product",
+        },
+      });
+      await execute(kernel, principal, "upgrade-assertion", {
+        op: "assert",
+        assertion: {
+          assertionId: "assertion:upgrade",
+          subjectEntityId: "product:upgrade",
+          predicate: "description",
+          object: { type: "string", value: "preserved assertion" },
+          kind: "reported_fact",
+        },
+      });
+      await appDatabase.close();
+      appDatabase = null;
+
+      await assert.rejects(
+        () =>
+          migratePostgres(
+            testConfig(adminUrl, artifactDirectory, {
+              dimensions: 768,
+              model: "wrong-model",
+              version: "1",
+            }),
+            undefined,
+            {
+              dimensions: 768,
+              model: "wrong-model",
+              version: "1",
+            },
+          ),
+        /does not match existing assertions/,
+      );
+      const unchangedDatabase = new ProductionDatabase(
+        testConfig(adminUrl, artifactDirectory),
+      );
+      try {
+        const unchanged = await unchangedDatabase.query<{
+          migration_applied: boolean;
+          legacy_index_present: boolean;
+        }>(
+          `SELECT
+             EXISTS (
+               SELECT 1
+               FROM agentic.schema_migrations
+               WHERE version = '002'
+             ) AS migration_applied,
+             to_regclass(
+               'agentic.assertions_embedding_hnsw'
+             ) IS NOT NULL AS legacy_index_present`,
+        );
+        assert.deepEqual(unchanged.rows[0], {
+          migration_applied: false,
+          legacy_index_present: true,
+        });
+      } finally {
+        await unchangedDatabase.close();
+      }
+
+      await migratePostgres(
+        testConfig(adminUrl, artifactDirectory),
+        undefined,
+        configuredEmbeddingSpace(config),
+      );
+
+      appDatabase = new ProductionDatabase(config);
+      await assertEmbeddingSpaceConfigured(
+        appDatabase,
+        configuredEmbeddingSpace(config),
+      );
+      const migrated = await appDatabase.withTenantTransaction(
+        principal,
+        async (client) =>
+          client.query<{
+            assertion_id: string;
+            embedding_dimensions: number;
+            vector_dimensions: number;
+          }>(
+            `SELECT
+               assertion_id,
+               embedding_dimensions,
+               vector_dims(embedding) AS vector_dimensions
+             FROM agentic.assertions
+             WHERE assertion_id = 'assertion:upgrade'`,
+          ),
+      );
+      assert.deepEqual(migrated.rows[0], {
+        assertion_id: "assertion:upgrade",
+        embedding_dimensions: 1536,
+        vector_dimensions: 1536,
+      });
+    } finally {
+      if (appDatabase) {
+        await appDatabase.close();
+      }
+      if (databaseCreated) {
+        await control.query(
+          `DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`,
+        );
+      }
+      if (controlConnected) {
+        await control.end();
+      }
+      rmSync(artifactDirectory, { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   "PostgreSQL profile enforces identity, RLS, encryption, and effect authority",
@@ -56,7 +305,15 @@ test(
     );
     const config = testConfig(databaseUrl, artifactDirectory);
     if (migrationDatabaseUrl) {
-      await migratePostgres(testConfig(migrationDatabaseUrl, artifactDirectory));
+      const migrationConfig = testConfig(
+        migrationDatabaseUrl,
+        artifactDirectory,
+      );
+      await migratePostgres(
+        migrationConfig,
+        undefined,
+        configuredEmbeddingSpace(migrationConfig),
+      );
     }
     const database = new ProductionDatabase(config);
     const artifactStore = new EncryptedArtifactStore(
@@ -564,6 +821,500 @@ test(
   },
 );
 
+test(
+  "embedding dimensions are configurable and use bounded HNSW candidates",
+  { skip: !databaseUrl || !migrationDatabaseUrl },
+  async () => {
+    assert.ok(databaseUrl);
+    assert.ok(migrationDatabaseUrl);
+    const databaseName = `agentic_embedding_${randomUUID().replaceAll("-", "")}`;
+    const artifactDirectory = mkdtempSync(
+      join(tmpdir(), "agentic-data-embedding-space-"),
+    );
+    const controlUrl = databaseUrlFor(migrationDatabaseUrl, "postgres");
+    const adminUrl = databaseUrlFor(migrationDatabaseUrl, databaseName);
+    const appUrl = databaseUrlFor(databaseUrl, databaseName);
+    const control = new PgClient({ connectionString: controlUrl });
+    let database: ProductionDatabase | null = null;
+    let controlConnected = false;
+    let databaseCreated = false;
+    try {
+      await control.connect();
+      controlConnected = true;
+      await control.query(`CREATE DATABASE ${databaseName}`);
+      databaseCreated = true;
+      const config = testConfig(appUrl, artifactDirectory, {
+        dimensions: 768,
+        model: "test-embedding-768",
+        version: "1",
+      });
+      config.searchCandidateLimit = 20;
+      await migratePostgres(
+        testConfig(adminUrl, artifactDirectory, {
+          dimensions: 768,
+          model: "test-embedding-768",
+          version: "1",
+        }),
+        undefined,
+        configuredEmbeddingSpace(config),
+      );
+      database = new ProductionDatabase(config);
+      const activeDatabase = database;
+      await assertEmbeddingSpaceConfigured(
+        activeDatabase,
+        configuredEmbeddingSpace(config),
+      );
+      const status = await embeddingSpaceStatus(
+        activeDatabase,
+        configuredEmbeddingSpace(config),
+      );
+      assert.equal(status.ready, true);
+      assert.equal(status.actual?.dimensions, 768);
+      assert.equal(
+        embeddingIndexName(768),
+        "assertions_embedding_hnsw_768",
+      );
+      const mismatchStatus = await embeddingSpaceStatus(activeDatabase, {
+        dimensions: 384,
+        model: "test-embedding-384",
+        version: "1",
+      });
+      assert.equal(mismatchStatus.ready, false);
+      await assert.rejects(
+        () =>
+          assertEmbeddingSpaceConfigured(activeDatabase, {
+            dimensions: 384,
+            model: "test-embedding-384",
+            version: "1",
+          }),
+        /does not match database embedding space/,
+      );
+      await assert.rejects(
+        () =>
+          activeDatabase.query(
+            `UPDATE agentic.embedding_configuration
+             SET dimensions = 384
+             WHERE singleton = TRUE`,
+          ),
+        /permission denied/,
+      );
+
+      const provider = new ScenarioEmbeddingProvider(
+        768,
+        "test-embedding-768",
+        "1",
+      );
+      const artifactStore = new EncryptedArtifactStore(
+        artifactDirectory,
+        config.artifactKeyring,
+      );
+      const metrics = new MetricsRegistry();
+      const logger = createLogger(config);
+      const kernel = new ProductionKernel(
+        activeDatabase,
+        artifactStore,
+        provider,
+        config,
+        metrics,
+        logger,
+      );
+      const key = await createApiKey(activeDatabase, config, {
+        tenantId: "embedding-tenant",
+        tenantName: "Embedding Tenant",
+        principalId: "embedding-agent",
+        scopes: ["data:read", "data:write"],
+        purposes: ["test"],
+        effectBudgetCurrency: "USD",
+        effectBudgetLimit: "0",
+      });
+      const principal = await authenticateToken(
+        activeDatabase,
+        config,
+        key.token,
+        "test",
+      );
+      await execute(kernel, principal, "embedding-entity", {
+        op: "put_entity",
+        entity: {
+          entityId: "product:embedding",
+          entityType: "product",
+          canonicalName: "Configurable Embedding Product",
+        },
+      });
+      const writer = await activeDatabase.pool.connect();
+      const migrationDatabase = new ProductionDatabase(
+        testConfig(adminUrl, artifactDirectory, {
+          dimensions: 768,
+          model: "test-embedding-768",
+          version: "1",
+        }),
+      );
+      let writerTransactionOpen = false;
+      try {
+        await writer.query("BEGIN");
+        writerTransactionOpen = true;
+        await writer.query(
+          `SELECT
+             set_config('app.tenant_id', $1, TRUE),
+             set_config('app.principal_id', $2, TRUE),
+             set_config('app.key_id', $3, TRUE),
+             set_config('app.purpose', $4, TRUE)`,
+          [
+            principal.tenantId,
+            principal.principalId,
+            principal.keyId,
+            principal.purpose,
+          ],
+        );
+        await writer.query(
+          `INSERT INTO agentic.assertions (
+             tenant_id, assertion_id, subject_entity_id, predicate,
+             object_type, object_json, object_key, kind, perspective,
+             valid_from, strength_type, strength_json, authority, status,
+             search_text, embedding, embedding_model, embedding_version,
+             created_by
+           ) VALUES (
+             $1, 'assertion:configuration-race', 'product:embedding',
+             'configuration_race', 'string', $2, $3, 'reported_fact',
+             'organization', clock_timestamp(), 'none', $4, 50, 'active',
+             'configuration race', $5::vector, $6, $7, $8
+           )`,
+          [
+            principal.tenantId,
+            { type: "string", value: "configuration race" },
+            JSON.stringify({ type: "string", value: "configuration race" }),
+            { type: "none" },
+            vectorToSql(vector(0, 768)),
+            provider.model,
+            provider.version,
+            principal.principalId,
+          ],
+        );
+        let reconfigurationFinished = false;
+        const reconfiguration = configureEmbeddingSpace(
+          migrationDatabase,
+          {
+            dimensions: 384,
+            model: "test-embedding-384",
+            version: "1",
+          },
+        )
+          .then(
+            () => ({ error: null }),
+            (error: unknown) => ({ error }),
+          )
+          .finally(() => {
+            reconfigurationFinished = true;
+          });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        assert.equal(reconfigurationFinished, false);
+        await writer.query("COMMIT");
+        writerTransactionOpen = false;
+        const reconfigurationResult = await reconfiguration;
+        assert.ok(reconfigurationResult.error instanceof Error);
+        assert.match(
+          reconfigurationResult.error.message,
+          /cannot change while assertions exist/,
+        );
+      } finally {
+        if (writerTransactionOpen) {
+          await writer.query("ROLLBACK");
+        }
+        writer.release();
+        await migrationDatabase.close();
+      }
+      await execute(kernel, principal, "embedding-assertion", {
+        op: "assert",
+        assertion: {
+          assertionId: "assertion:embedding",
+          subjectEntityId: "product:embedding",
+          predicate: "description",
+          object: { type: "string", value: "configurable dimensions" },
+          kind: "reported_fact",
+        },
+      });
+      await assert.rejects(
+        () =>
+          activeDatabase.withTenantTransaction(
+            principal,
+            async (client) =>
+              client.query(
+                `UPDATE agentic.assertions
+                 SET embedding = $1::vector
+                 WHERE assertion_id = 'assertion:embedding'`,
+                [vectorToSql(Array.from({ length: 768 }, () => 0))],
+              ),
+          ),
+        /assertions_embedding_dimensions/,
+      );
+      const search = await kernel.searchReadOnly(principal, {
+        op: "search",
+        text: "configurable dimensions",
+      });
+      assert.equal(
+        search[0]?.assertion.assertionId,
+        "assertion:embedding",
+      );
+
+      await execute(kernel, principal, "history-entity", {
+        op: "put_entity",
+        entity: {
+          entityId: "product:history",
+          entityType: "product",
+          canonicalName: "Historical Product",
+        },
+      });
+      let supersededAssertionId: string | undefined;
+      for (let index = 0; index < 25; index += 1) {
+        const assertionId = `assertion:stale:${index}`;
+        await execute(kernel, principal, `stale-assertion-${index}`, {
+          op: "assert",
+          assertion: {
+            assertionId,
+            subjectEntityId: "product:history",
+            predicate: "history_value",
+            object: { type: "string", value: `stale-value-${index}` },
+            kind: "reported_fact",
+            ...(supersededAssertionId
+              ? { supersedesAssertionId: supersededAssertionId }
+              : {}),
+          },
+        });
+        supersededAssertionId = assertionId;
+      }
+      await execute(kernel, principal, "current-assertion", {
+        op: "assert",
+        assertion: {
+          assertionId: "assertion:current",
+          subjectEntityId: "product:history",
+          predicate: "history_value",
+          object: { type: "string", value: "current-value" },
+          kind: "reported_fact",
+          supersedesAssertionId: supersededAssertionId,
+        },
+      });
+      const currentSearch = await kernel.searchReadOnly(principal, {
+        op: "search",
+        text: "vector-only-query",
+        predicate: "history_value",
+        limit: 1,
+      });
+      assert.equal(
+        currentSearch[0]?.assertion.assertionId,
+        "assertion:current",
+      );
+
+      await execute(kernel, principal, "graph-root", {
+        op: "put_entity",
+        entity: {
+          entityId: "graph:root",
+          entityType: "service",
+          canonicalName: "Graph Root",
+        },
+      });
+      await execute(kernel, principal, "graph-target", {
+        op: "put_entity",
+        entity: {
+          entityId: "graph:target",
+          entityType: "service",
+          canonicalName: "Graph Target",
+        },
+      });
+      await execute(kernel, principal, "graph-edge", {
+        op: "assert",
+        assertion: {
+          assertionId: "assertion:graph-edge",
+          subjectEntityId: "graph:root",
+          predicate: "related_to",
+          object: { type: "entity", value: "graph:target" },
+          kind: "reported_fact",
+        },
+      });
+      await execute(kernel, principal, "graph-target-value", {
+        op: "assert",
+        assertion: {
+          assertionId: "assertion:graph-target",
+          subjectEntityId: "graph:target",
+          predicate: "graph_value",
+          object: { type: "string", value: "reachable-value" },
+          kind: "reported_fact",
+        },
+      });
+      for (let index = 0; index < 25; index += 1) {
+        const entityId = `graph:unrelated:${index}`;
+        await execute(kernel, principal, `unrelated-entity-${index}`, {
+          op: "put_entity",
+          entity: {
+            entityId,
+            entityType: "service",
+            canonicalName: `Unrelated Service ${index}`,
+          },
+        });
+        await execute(kernel, principal, `unrelated-assertion-${index}`, {
+          op: "assert",
+          assertion: {
+            assertionId: `assertion:unrelated:${index}`,
+            subjectEntityId: entityId,
+            predicate: "graph_value",
+            object: { type: "string", value: `unrelated-value-${index}` },
+            kind: "reported_fact",
+          },
+        });
+      }
+      const graphSearch = await kernel.searchReadOnly(principal, {
+        op: "search",
+        text: "vector-only-query",
+        predicate: "graph_value",
+        relatedToEntityId: "graph:root",
+        maxGraphDepth: 2,
+        limit: 1,
+      });
+      assert.equal(
+        graphSearch[0]?.assertion.assertionId,
+        "assertion:graph-target",
+      );
+
+      await execute(kernel, principal, "tenant-target-entity", {
+        op: "put_entity",
+        entity: {
+          entityId: "tenant:target",
+          entityType: "service",
+          canonicalName: "Tenant Target",
+        },
+      });
+      await execute(kernel, principal, "tenant-target-assertion", {
+        op: "assert",
+        assertion: {
+          assertionId: "assertion:tenant-target",
+          subjectEntityId: "tenant:target",
+          predicate: "tenant_value",
+          object: { type: "string", value: "current-value" },
+          kind: "reported_fact",
+        },
+      });
+      const otherKey = await createApiKey(activeDatabase, config, {
+        tenantId: "embedding-other-tenant",
+        tenantName: "Other Embedding Tenant",
+        principalId: "other-embedding-agent",
+        scopes: ["data:read", "data:write"],
+        purposes: ["test"],
+        effectBudgetCurrency: "USD",
+        effectBudgetLimit: "0",
+      });
+      const otherPrincipal = await authenticateToken(
+        activeDatabase,
+        config,
+        otherKey.token,
+        "test",
+      );
+      for (let index = 0; index < 25; index += 1) {
+        const entityId = `tenant:other:${index}`;
+        await execute(kernel, otherPrincipal, `other-entity-${index}`, {
+          op: "put_entity",
+          entity: {
+            entityId,
+            entityType: "service",
+            canonicalName: `Other Tenant Service ${index}`,
+          },
+        });
+        await execute(
+          kernel,
+          otherPrincipal,
+          `other-assertion-${index}`,
+          {
+            op: "assert",
+            assertion: {
+              assertionId: `assertion:other:${index}`,
+              subjectEntityId: entityId,
+              predicate: "tenant_value",
+              object: { type: "string", value: `other-value-${index}` },
+              kind: "reported_fact",
+            },
+          },
+        );
+      }
+      const tenantSearch = await kernel.searchReadOnly(principal, {
+        op: "search",
+        text: "vector-only-query",
+        predicate: "tenant_value",
+        limit: 1,
+      });
+      assert.equal(
+        tenantSearch[0]?.assertion.assertionId,
+        "assertion:tenant-target",
+      );
+
+      const query = buildHybridSearchQuery({
+        ...configuredEmbeddingSpace(config),
+        embedding: vector(1, 768),
+        operation: {
+          op: "search",
+          text: "configurable dimensions",
+        },
+        systemAt: new Date().toISOString(),
+        validAt: new Date().toISOString(),
+        candidateLimit: 20,
+        resultLimit: 10,
+      });
+      const plan = await activeDatabase.withTenantTransaction(
+        principal,
+        async (client) => {
+          await client.query("SET LOCAL enable_seqscan = off");
+          const result = await client.query<{ "QUERY PLAN": string }>(
+            `EXPLAIN (COSTS OFF) ${query.text}`,
+            query.values,
+          );
+          return result.rows.map((row) => row["QUERY PLAN"]).join("\n");
+        },
+      );
+      assert.match(plan, /assertions_embedding_hnsw_768/);
+
+      await assert.rejects(
+        () =>
+          migratePostgres(
+            testConfig(adminUrl, artifactDirectory, {
+              dimensions: 384,
+              model: "test-embedding-384",
+              version: "1",
+            }),
+            undefined,
+            {
+              dimensions: 384,
+              model: "test-embedding-384",
+              version: "1",
+            },
+          ),
+        /cannot change while assertions exist/,
+      );
+      await cleanupTenant(activeDatabase, principal);
+      await cleanupTenant(activeDatabase, otherPrincipal);
+      await activeDatabase.withSystemTransaction(async (client) => {
+        await client.query(
+          "DELETE FROM agentic_auth.api_keys WHERE tenant_id = ANY($1)",
+          [[principal.tenantId, otherPrincipal.tenantId]],
+        );
+        await client.query(
+          "DELETE FROM agentic_auth.tenants WHERE tenant_id = ANY($1)",
+          [[principal.tenantId, otherPrincipal.tenantId]],
+        );
+      });
+    } finally {
+      if (database) {
+        await database.close();
+      }
+      if (databaseCreated) {
+        await control.query(
+          `DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`,
+        );
+      }
+      if (controlConnected) {
+        await control.end();
+      }
+      rmSync(artifactDirectory, { recursive: true, force: true });
+    }
+  },
+);
+
 test("OpenAI-compatible embedding provider validates real response shape", async () => {
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, "Bearer test-key");
@@ -597,10 +1348,12 @@ test("OpenAI-compatible embedding provider validates real response shape", async
       "test-model",
       1536,
       5_000,
+      "weights-2",
     );
     const embeddings = await provider.embed(["one", "two"]);
     assert.equal(embeddings.length, 2);
     assert.equal(embeddings[0]?.length, 1536);
+    assert.equal(provider.version, "weights-2");
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
@@ -656,17 +1409,43 @@ test("secure effect transport rejects private destinations", async () => {
 });
 
 class TestEmbeddingProvider implements EmbeddingProvider {
-  public readonly model = "test-embedding";
-  public readonly version = "1";
-  public readonly dimensions = 1536;
   public longestInput = 0;
+
+  public constructor(
+    public readonly dimensions = 1536,
+    public readonly model = "test-embedding",
+    public readonly version = "1",
+  ) {}
 
   public async embed(texts: string[]): Promise<number[][]> {
     this.longestInput = Math.max(
       this.longestInput,
       ...texts.map((text) => text.length),
     );
-    return texts.map((text) => vector(text.length || 1));
+    return texts.map((text) =>
+      vector(text.length || 1, this.dimensions),
+    );
+  }
+}
+
+class ScenarioEmbeddingProvider extends TestEmbeddingProvider {
+  public override async embed(texts: string[]): Promise<number[][]> {
+    this.longestInput = Math.max(
+      this.longestInput,
+      ...texts.map((text) => text.length),
+    );
+    return texts.map((text) => {
+      if (
+        text.includes("current-value") ||
+        text.includes("reachable-value")
+      ) {
+        const result = vector(0, this.dimensions);
+        result[0] = 0.8;
+        result[1] = 0.6;
+        return result;
+      }
+      return vector(0, this.dimensions);
+    });
   }
 }
 
@@ -680,8 +1459,8 @@ class FailingEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
-function vector(seed: number): number[] {
-  const result = Array.from({ length: 1536 }, () => 0);
+function vector(seed: number, dimensions = 1536): number[] {
+  const result = Array.from({ length: dimensions }, () => 0);
   result[seed % result.length] = 1;
   return result;
 }
@@ -689,6 +1468,15 @@ function vector(seed: number): number[] {
 function testConfig(
   url: string,
   artifactDirectory: string,
+  embedding: {
+    model: string;
+    version: string;
+    dimensions: number;
+  } = {
+    model: "test-embedding",
+    version: "1",
+    dimensions: 1536,
+  },
 ): ProductionConfig {
   return {
     databaseUrl: url,
@@ -703,9 +1491,13 @@ function testConfig(
     },
     embeddingBaseUrl: "https://embeddings.example.com/v1",
     embeddingApiKey: "test",
-    embeddingModel: "test",
-    embeddingDimensions: 1536,
+    embeddingModel: embedding.model,
+    embeddingVersion: embedding.version,
+    embeddingDimensions: embedding.dimensions,
     embeddingTimeoutMs: 5_000,
+    searchCandidateLimit: 200,
+    hnswEfSearch: 100,
+    hnswMaxScanTuples: 20_000,
     effectAllowedHosts: new Set(["payments.example.com"]),
     effectTimeoutMs: 5_000,
     effectLeaseSeconds: 30,
@@ -762,6 +1554,12 @@ function listFiles(directory: string): string[] {
   return files;
 }
 
+function databaseUrlFor(connectionString: string, database: string): string {
+  const url = new URL(connectionString);
+  url.pathname = `/${database}`;
+  return url.toString();
+}
+
 async function testAuthenticatedHttp(
   config: ProductionConfig,
   database: ProductionDatabase,
@@ -781,6 +1579,8 @@ async function testAuthenticatedHttp(
   const port = (server.address() as AddressInfo).port;
   const base = `http://127.0.0.1:${port}`;
   try {
+    const ready = await fetch(`${base}/health/ready`);
+    assert.equal(ready.status, 200);
     const unauthorized = await fetch(`${base}/v1/catalog`);
     assert.equal(unauthorized.status, 401);
     const authorized = await fetch(`${base}/v1/catalog`, {
@@ -790,6 +1590,18 @@ async function testAuthenticatedHttp(
       },
     });
     assert.equal(authorized.status, 200);
+    const catalog = await authorized.json() as {
+      embeddingSpace?: {
+        model: string;
+        version: string;
+        dimensions: number;
+      };
+    };
+    assert.deepEqual(catalog.embeddingSpace, {
+      model: config.embeddingModel,
+      version: config.embeddingVersion,
+      dimensions: config.embeddingDimensions,
+    });
     const missingSql = await fetch(`${base}/v1/sql`, {
       headers: {
         authorization: `Bearer ${token}`,

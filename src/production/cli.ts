@@ -7,11 +7,14 @@ import {
 } from "./auth.js";
 import { reconcileArtifactFiles } from "./artifact-reconciliation.js";
 import {
+  configuredEmbeddingSpace,
   loadDatabaseConfig,
+  loadEmbeddingSpaceConfig,
   loadMigrationDatabaseConfig,
   loadProductionConfig,
 } from "./config.js";
 import { ProductionDatabase } from "./database.js";
+import { assertEmbeddingSpaceConfigured } from "./embedding-space.js";
 import {
   EffectWorker,
   SecureHttpEffectTransport,
@@ -30,8 +33,13 @@ async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
   switch (command) {
     case "migrate": {
-      const applied = await migratePostgres(loadMigrationDatabaseConfig());
-      print({ applied });
+      const embeddingSpace = loadEmbeddingSpaceConfig();
+      const applied = await migratePostgres(
+        loadMigrationDatabaseConfig(),
+        undefined,
+        embeddingSpace,
+      );
+      print({ applied, embeddingSpace });
       return;
     }
     case "migration-status": {
@@ -40,7 +48,11 @@ async function main(): Promise<void> {
     }
     case "create-key": {
       const databaseConfig = loadDatabaseConfig();
-      await migratePostgres(loadMigrationDatabaseConfig());
+      await migratePostgres(
+        loadMigrationDatabaseConfig(),
+        undefined,
+        loadEmbeddingSpaceConfig(),
+      );
       const pepper = requiredEnvironment("AUTH_PEPPER", 32);
       const database = new ProductionDatabase(databaseConfig);
       try {
@@ -90,7 +102,7 @@ async function main(): Promise<void> {
     case "serve": {
       const config = loadProductionConfig();
       const runtime = createProductionRuntime(config);
-      await assertMigrationsApplied(runtime.database);
+      await assertRuntimeReady(runtime.database, config);
       const server = await startProductionHttpServer({
         config,
         database: runtime.database,
@@ -108,7 +120,7 @@ async function main(): Promise<void> {
     case "worker": {
       const config = loadProductionConfig();
       const runtime = createProductionRuntime(config);
-      await assertMigrationsApplied(runtime.database);
+      await assertRuntimeReady(runtime.database, config);
       const worker = new EffectWorker(
         runtime.database,
         new SecureHttpEffectTransport(
@@ -158,7 +170,7 @@ async function main(): Promise<void> {
     case "mcp": {
       const config = loadProductionConfig();
       const runtime = createProductionRuntime(config);
-      await assertMigrationsApplied(runtime.database);
+      await assertRuntimeReady(runtime.database, config);
       const token = requiredEnvironment("AGENTIC_DATA_API_KEY", 1);
       const purpose = requiredEnvironment("AGENTIC_DATA_PURPOSE", 1);
       const principal = await authenticateToken(
@@ -207,6 +219,17 @@ async function main(): Promise<void> {
     default:
       throw new Error(`Unknown production command ${command}`);
   }
+}
+
+async function assertRuntimeReady(
+  database: ProductionDatabase,
+  config: ReturnType<typeof loadProductionConfig>,
+): Promise<void> {
+  await assertMigrationsApplied(database);
+  await assertEmbeddingSpaceConfigured(
+    database,
+    configuredEmbeddingSpace(config),
+  );
 }
 
 async function waitForServerShutdown(
