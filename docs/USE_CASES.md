@@ -11,6 +11,7 @@ For adoption criteria and costs, see
 | Level | Meaning |
 | --- | --- |
 | Supported | The repository includes the data model, operation, and tests |
+| Supported foundation | Generic primitives and invariants are implemented; the canonical domain scenario follows |
 | Extension point | Core primitives exist, but domain policy belongs in the application |
 | Planned | The architecture reserves the capability, but it is not implemented |
 
@@ -130,7 +131,7 @@ verification, support policy, remedy limits, and approval rules.
 
 ## Incident response
 
-**Support level:** Extension point
+**Support level:** Supported foundation
 
 Operational events can be represented without treating every hypothesis as a
 confirmed cause:
@@ -142,9 +143,13 @@ decision: roll back deployment under incident policy
 effect: execute the approved rollback
 ```
 
-The kernel provides temporal assertions, graph relationships, durable workflow
-state, effect authorization, retries, and execution history. Integrations with
-telemetry systems and deployment platforms are application adapters.
+The kernel provides temporal assertions, typed causal lineage, generic durable
+workflow state, decision- and policy-bound effect authorization, retries,
+unknown-outcome reconciliation, and execution history. Integrations with
+telemetry systems and deployment platforms remain application adapters.
+
+The next project phase builds the canonical end-to-end SRE scenario on these
+foundations.
 
 ## Controlled external actions
 
@@ -164,9 +169,9 @@ through:
 - stable effect and idempotency IDs;
 - provider-status reconciliation.
 
-The underlying effect model can support procurement, refunds, notifications,
-infrastructure changes, and similar workflows, but each requires a typed
-operation and receiver adapter.
+The generic effect operation supports infrastructure changes, procurement,
+notifications, and similar actions without applying retail inventory logic.
+Applications still supply typed receiver contracts and domain policy.
 
 ## Local and embedded applications
 

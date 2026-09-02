@@ -29,11 +29,15 @@ single governed system. It is designed for applications that need to answer:
 - Explicit `known`, `unknown`, and `conflicted` resolution results
 - Bounded lexical and HNSW vector candidates with graph and temporal reranking
 - Versioned embedding spaces configurable up to 2000 indexed dimensions
+- FK-backed lineage across evidence, assertions, workflow revisions, and
+  effects
+- Generic durable workflows with guarded revisions and terminal states
 - Durable workflow state, timers, idempotency, and execution receipts
 - Transactional inventory reservations and payment effect intents
 - Scoped API keys, purpose binding, and PostgreSQL row-level security
 - Encrypted immutable artifact storage with key rotation
 - Authorized effect delivery with budgets, retries, and status reconciliation
+- Decision- and policy-bound non-retail effects with isolated finalization
 - HTTP, MCP, TypeScript, CLI, and read-only local SQL interfaces
 
 ## Use cases

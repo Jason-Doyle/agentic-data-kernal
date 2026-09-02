@@ -18,6 +18,8 @@ For PostgreSQL changes, also run the integration suite described in
 - Keep retrieval scores separate from truth or confidence semantics.
 - Make every mutation idempotent or explicitly non-retryable.
 - Keep timers, effects, and state transitions deterministic and replayable.
+- Keep causal lineage tenant-scoped, typed, and backed by durable record IDs.
+- Do not let generic workflow operations bypass reserved domain invariants.
 - Enforce tenant identity at the storage boundary when adding shared or remote
   adapters.
 - Add an invariant or failure-path test for every consequential state change.

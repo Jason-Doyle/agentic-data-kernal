@@ -61,6 +61,13 @@ migration.
 The public intent API rejects payment outcome operations. Only the effect worker
 can finalize an effect after an authenticated, allowlisted, idempotent delivery.
 
+### Forged remediation authority
+
+Generic effects require active decision and directive assertions from the same
+tenant. The database stores those bindings and FK-backed lineage, while API-key
+scope, purpose, allowlisted targets, and budget checks remain authoritative.
+Generic workflow operations cannot modify the reserved retail workflow type.
+
 ### SSRF
 
 Effect URLs require HTTPS, an explicit hostname allowlist, no embedded

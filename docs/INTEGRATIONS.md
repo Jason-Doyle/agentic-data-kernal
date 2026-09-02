@@ -203,6 +203,12 @@ Successful response:
 
 The same idempotency key must return the same external result.
 
+The contract applies to both retail payments and generic effects such as
+deployment rollback. Generic requests carry the operation-specific JSON from
+`request_effect`; receivers should not infer authority from that payload.
+Authority remains in the kernel's key, purpose, policy binding, and
+authorization fence.
+
 ### Status reconciliation
 
 ```http

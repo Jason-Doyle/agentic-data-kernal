@@ -29,6 +29,9 @@ issue.
   passwords, and embedding-provider credentials in a secret manager.
 - Keep embedding model, version, and dimensions aligned with the database
   configuration. The runtime role can read but cannot alter that configuration.
+- Treat decision and directive assertions as audit bindings, not standalone
+  authorization. Generic effects still require scoped keys, approved purposes,
+  allowlisted HTTPS targets, and available budgets.
 - Keep the artifact keyring available for every key ID referenced by retained
   artifacts.
 - Configure a narrow `EFFECT_ALLOWED_HOSTS` list.

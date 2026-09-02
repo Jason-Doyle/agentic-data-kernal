@@ -39,6 +39,7 @@ try {
     "dist/production/index.d.ts",
     "migrations/postgres/001_core.sql",
     "migrations/postgres/002_embedding_space.sql",
+    "migrations/postgres/003_generic_agency.sql",
     "README.md",
     "LICENSE",
   ]) {
@@ -115,7 +116,8 @@ try {
   }
   if (
     !existsSync(join(postgresMigrationDirectory, "001_core.sql")) ||
-    !existsSync(join(postgresMigrationDirectory, "002_embedding_space.sql"))
+    !existsSync(join(postgresMigrationDirectory, "002_embedding_space.sql")) ||
+    !existsSync(join(postgresMigrationDirectory, "003_generic_agency.sql"))
   ) {
     throw new Error("Packaged PostgreSQL migrations are unavailable");
   }
