@@ -81,6 +81,18 @@ comparative evidence that it:
 Those claims require controlled comparisons against alternatives such as
 PostgreSQL plus a vector store and workflow engine.
 
+## SRE comparison
+
+The repository now includes a deterministic comparison against a competent
+conventional PostgreSQL implementation. Correctness is required to remain
+equal: both variants deliver once, reconcile once, resolve the incident, and
+answer the same nine durable audit questions.
+
+The comparison measures application-authored code and tables while separately
+disclosing total operated tables, kernel source size, database footprint, and
+informational runtime. It does not claim runtime or storage superiority. See
+[benchmarks/sre/results/report.md](../benchmarks/sre/results/report.md).
+
 ## Costs and disadvantages
 
 ### More concepts than ordinary CRUD

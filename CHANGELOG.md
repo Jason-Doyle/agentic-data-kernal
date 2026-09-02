@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added a reproducible SRE comparison between a competent conventional
+  PostgreSQL implementation and the kernel scenario.
+- Added correctness parity gates, engine-neutral audit questions, application
+  surface measurements, database footprint, and raw generated results.
+
 ## 0.3.0-alpha.2
 
 - Added bounded causal explanation graphs with structured and human-readable

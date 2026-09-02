@@ -34,6 +34,14 @@ export interface SreScenarioOptions {
   config: ProductionConfig;
   migrationConfig: DatabaseConfig;
   runId?: string;
+  remediation?: SreRemediationTransport;
+}
+
+export interface SreRemediationTransport extends EffectTransport {
+  readonly deliveryCount: number;
+  readonly reconciliationCount: number;
+  readonly errorRate: number;
+  readonly providerReference: string;
 }
 
 export interface SreScenarioResult {
@@ -110,7 +118,8 @@ export async function runSreScenario(
     config.embeddingVersion,
     config.embeddingDimensions,
   );
-  const remediation = new SyntheticRemediationTransport();
+  const remediation =
+    options.remediation ?? new SyntheticRemediationTransport();
   const errorRateBefore = remediation.errorRate;
   let decisionAssertionId = "";
   let selectedHypothesisId = "";
@@ -430,7 +439,7 @@ export async function runSreScenario(
 async function continueAfterFirstRestart(input: {
   config: ProductionConfig;
   provider: EmbeddingProvider;
-  remediation: SyntheticRemediationTransport;
+  remediation: SreRemediationTransport;
   keyToken: string;
   purpose: string;
   runId: string;
@@ -816,12 +825,19 @@ class ScenarioEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
-class SyntheticRemediationTransport implements EffectTransport {
+export class SyntheticRemediationTransport
+  implements SreRemediationTransport
+{
   public deliveryCount = 0;
   public reconciliationCount = 0;
   public errorRate = 0.42;
   public providerReference = "";
   private applied = false;
+  private deliveredEffect: {
+    effectId: string;
+    authorizationFence: string;
+    idempotencyKey: string;
+  } | null = null;
 
   public async deliver(effect: {
     effectId: string;
@@ -834,8 +850,24 @@ class SyntheticRemediationTransport implements EffectTransport {
     responseStatus: null;
     outcome: JsonValue;
   }> {
+    if (
+      effect.targetUrl !== "https://deployments.example.com/rollback" ||
+      !effect.effectId ||
+      !effect.authorizationFence ||
+      !/^rollback-api-v42-[A-Za-z0-9_-]{1,64}$/.test(
+        effect.idempotencyKey,
+      ) ||
+      !isRollbackRequest(effect.request)
+    ) {
+      throw new Error("Synthetic remediation received an invalid rollback");
+    }
     this.deliveryCount += 1;
     this.applied = true;
+    this.deliveredEffect = {
+      effectId: effect.effectId,
+      authorizationFence: effect.authorizationFence,
+      idempotencyKey: effect.idempotencyKey,
+    };
     this.errorRate = 0.03;
     this.providerReference = `synthetic-rollback-${effect.effectId}`;
     return {
@@ -848,21 +880,46 @@ class SyntheticRemediationTransport implements EffectTransport {
     };
   }
 
-  public async reconcile(): Promise<{
+  public async reconcile(effect: {
+    effectId: string;
+    authorizationFence: string;
+    idempotencyKey: string;
+    statusUrl: string;
+  }): Promise<{
     status: "succeeded";
     responseStatus: 200;
     outcome: JsonValue;
   }> {
-    this.reconciliationCount += 1;
-    if (!this.applied) {
+    if (
+      !this.applied ||
+      !this.deliveredEffect ||
+      effect.effectId !== this.deliveredEffect.effectId ||
+      effect.authorizationFence !==
+        this.deliveredEffect.authorizationFence ||
+      effect.idempotencyKey !== this.deliveredEffect.idempotencyKey ||
+      effect.statusUrl !==
+        "https://deployments.example.com/status/rollback"
+    ) {
       throw new Error("Cannot reconcile a remediation that was not applied");
     }
+    this.reconciliationCount += 1;
     return {
       status: "succeeded",
       responseStatus: 200,
       outcome: { providerReference: this.providerReference },
     };
   }
+}
+
+function isRollbackRequest(value: JsonValue): boolean {
+  return (
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof value === "object" &&
+    Object.keys(value).length === 2 &&
+    value.service === "checkout-api" &&
+    value.deployment === "api-v42"
+  );
 }
 
 function normalizeRunId(value: string): string {
