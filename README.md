@@ -9,124 +9,170 @@
 
 [![CI](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/ci.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/codeql.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/codeql.yml)
+[![npm next](https://img.shields.io/npm/v/agentic-data-kernel/next?label=npm%20next)](https://www.npmjs.com/package/agentic-data-kernel)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Open source data infrastructure for long-running software agents.
+An agent-first persistence layer for durable knowledge, workflows, and
+controlled external effects.
 
-Agentic Data Kernel keeps knowledge, workflow state, and external effects in a
-single governed system. It is designed for applications that need to answer:
+Most databases are good at storing current application state. Long-running
+agents also need to preserve:
 
-- What is currently known?
-- When was it valid?
-- Where did it come from?
-- What conflicts with it?
-- Which workflow or external action depended on it?
+- what was known at a particular time;
+- which evidence supported or contradicted it;
+- why a decision was authorized;
+- which workflow revision produced an external action;
+- whether a timed-out action happened;
+- how later reconciliation and verification changed the outcome.
 
-The public API separates these responsibilities into a Knowledge layer, an
-Agency layer, and a compatibility adapter for the original retail workflow.
+Agentic Data Kernel provides those semantics over SQLite for local development
+and PostgreSQL for production. It is not a new storage engine, a replacement
+for SQL, or a claim that PostgreSQL cannot implement the same behavior. It is a
+shared contract for patterns that agentic applications otherwise rebuild as
+application-specific tables, workflow code, lineage queries, and effect
+recovery logic.
 
-## Capabilities
+## Proof before platform
 
-- Bitemporal assertions with evidence, epistemic kind, perspective, and typed
-  uncertainty
-- Explicit `known`, `unknown`, and `conflicted` resolution results
-- Bounded lexical and HNSW vector candidates with graph and temporal reranking
-- Versioned embedding spaces configurable up to 2000 indexed dimensions
-- FK-backed lineage across evidence, assertions, workflow revisions, and
-  effects
-- Generic durable workflows with guarded revisions and terminal states
-- Durable workflow state, timers, idempotency, and execution receipts
-- Transactional inventory reservations and payment effect intents
-- Scoped API keys, purpose binding, and PostgreSQL row-level security
-- Encrypted immutable artifact storage with key rotation
-- Authorized effect delivery with budgets, retries, and status reconciliation
-- Decision- and policy-bound non-retail effects with isolated finalization
-- Bounded explanation graphs from evidence through decisions, effects, and
-  verification
-- HTTP, MCP, TypeScript, CLI, and read-only local SQL interfaces
-
-## Use cases
-
-| Use case | What the kernel provides |
-| --- | --- |
-| Catalog and master-data reconciliation | Source-backed claims, conflicting values, temporal correction, and reviewable resolution |
-| Persistent agent memory | Distinct observations, facts, inferences, decisions, and experiences with provenance |
-| Retail order workflows | Inventory holds, expiry timers, payment effects, idempotent retries, and durable order state |
-| Customer support operations | Tenant-scoped context retrieval, current-state checks, and evidence-linked decisions |
-| Incident response | Temporal observations, hypotheses, workflow history, and controlled remediation effects |
-| Controlled payment automation | Purpose-scoped credentials, effect budgets, authorization fences, and audit receipts |
-
-See [docs/USE_CASES.md](docs/USE_CASES.md) for detailed flows and current
-support.
-
-## Flagship SRE scenario
-
-The production-profile SRE scenario runs:
+The flagship scenario starts with a checkout service at a 42 percent error
+rate and ends only after a rollback is durably reconciled and monitoring
+observes recovery to 3 percent.
 
 ```text
-alert -> evidence -> competing hypotheses -> decision -> authorized rollback
-      -> unknown outcome -> restart -> reconciliation -> verification
+alert
+  -> source-backed observations
+  -> competing hypotheses
+  -> confidence revision
+  -> conflict-preserving resolution
+  -> decision + governing policy
+  -> authorized rollback
+  -> timeout after provider apply
+  -> runtime restart
+  -> provider reconciliation
+  -> verification observation
+  -> resolved incident
 ```
 
-It applies the synthetic rollback once, survives two runtime restarts, and
-finishes only after monitoring verifies recovery.
+The deterministic run closes and recreates runtime objects twice. The rollback
+is applied once, its first result is `unknown`, and the next runtime reconciles
+the provider state instead of delivering again.
+
+```json
+{
+  "finalState": "resolved",
+  "effectStatus": "succeeded",
+  "resolutionStatus": "resolved_with_conflict",
+  "deliveryCount": 1,
+  "reconciliationCount": 1,
+  "agentRestarts": 2,
+  "errorRateBefore": 0.42,
+  "errorRateAfter": 0.03,
+  "traceNodeCount": 16,
+  "traceEdgeCount": 19
+}
+```
+
+From a source checkout, prepare `.env` using the
+[Production Profile](docs/PRODUCTION.md#initial-setup), then run:
 
 ```powershell
+npm install
+npm run build
+docker compose up -d postgres
+docker compose run --rm bootstrap
 npm run example:sre
 ```
 
-See [docs/SRE_SCENARIO.md](docs/SRE_SCENARIO.md) for setup, expected output,
-and demonstrated invariants.
+See [Flagship SRE Scenario](docs/SRE_SCENARIO.md) for setup, records, and
+boundaries.
 
-The example also prints a human-readable trace rooted at the rollback effect.
+## The causal trace
 
-## SRE comparison
+`explain` traverses explicitly stored lineage around an artifact, assertion,
+workflow revision, or effect. Effect traces include delivery and
+reconciliation attempts. Artifact plaintext is excluded.
 
-The repository implements the same incident with conventional PostgreSQL
-application tables and with Agentic Data Kernel. Both variants must resolve
-with one delivery, one reconciliation, and complete durable audit answers.
+An abridged rollback trace looks like this. Live output also includes record
+values, durable references, and attempt timestamps.
 
-```powershell
-npm run benchmark:sre
+```text
+Trace: effect_...
+
+Nodes:
+[0] deployment.rollback effect succeeded
+  attempt 1: unknown
+  attempt 2: succeeded HTTP 200
+  [1] decision remediation
+  [1] directive incident_remediation_policy
+    [2] hypothesis primary_cause
+      [3] observation deployed_version
+      [3] observation database_cpu_change
+      [3] observation error_rate
+  [1] observation error_rate
+
+Links:
+  assertion:decision --authorizes--> effect_...
+  assertion:policy --governs--> effect_...
+  workflow:incident@3 --produces--> effect_...
+  effect_... --verifies--> assertion:verification
 ```
 
-The comparison reports application-owned code and schema separately from total
-operated infrastructure, database footprint, and informational runtime. See
-[benchmarks/sre/README.md](benchmarks/sre/README.md) and the generated
-[benchmark report](benchmarks/sre/results/report.md).
+The same trace is available as bounded structured JSON through TypeScript,
+Agent Intent, HTTP, MCP, and both CLIs. See
+[Explain and Trace](docs/EXPLAIN.md).
 
-## Project status
+## Comparative result
 
-The current release is `0.3.0-alpha.4`.
+The repository implements the incident twice:
 
-Two runtime profiles are maintained:
+1. a competent conventional PostgreSQL application with durable attempts,
+   idempotency, reconciliation, lineage, and audit data;
+2. a thin adapter that reuses the shipped Agentic Data Kernel scenario.
 
-- **Development profile:** embedded SQLite, loopback HTTP, local MCP, and
-  read-only SQL for inspection.
-- **PostgreSQL profile:** PostgreSQL 18, pgvector, forced tenant isolation,
-  authenticated APIs, encrypted artifacts, provider embeddings, effect
-  workers, TLS, migrations, metrics, backup, restore, and load tooling.
+Correctness is required to tie. CI reruns both variants three times and rejects
+stale or inconsistent published evidence.
 
-The PostgreSQL profile targets bounded single-primary deployments. See
-[docs/PRODUCTION.md](docs/PRODUCTION.md) before exposing it outside a trusted
-environment.
+| Measure | Conventional PostgreSQL | Agentic Data Kernel |
+| --- | ---: | ---: |
+| Correct runs | 3/3 | 3/3 |
+| Delivery count per run | 1 | 1 |
+| Reconciliation count per run | 1 | 1 |
+| Durable audit answers | 9/9 | 9/9 |
+| Observed recovery | 0.42 to 0.03 | 0.42 to 0.03 |
+| Application-owned nonblank lines | 317 | 43 |
+| Application-authored tables | 8 | 0 |
+| Total operated tables | 8 | 18 |
+| Median database footprint | 540,672 bytes | 1,572,864 bytes |
+| Informational median runtime | 58.12 ms | 876.17 ms |
 
-## Install
+The result is deliberately not presented as a universal win:
 
-Install the TypeScript library:
+- PostgreSQL matches the kernel on correctness.
+- The smaller adapter reuses 929 lines of shipped scenario code and a 13,750
+  line dependency. It is not an equal from-scratch implementation comparison.
+- The kernel operates more tables, uses more storage, and takes substantially
+  longer in this deterministic smoke run.
+- Runtime is informational because the variants perform different work. This
+  is not a latency benchmark.
+- The test reloads database-backed runtime objects. It does not simulate an
+  operating-system process crash.
 
-```powershell
-npm install agentic-data-kernel@next
-```
+Read the [methodology](benchmarks/sre/README.md), the
+[generated report](benchmarks/sre/results/report.md), and the
+[raw evidence](benchmarks/sre/results/summary.json).
 
-Run the embedded example without cloning the repository:
+## Programming model
 
-```powershell
-npx --yes agentic-data-kernel@next example --db .data\example.db
-```
+The API is divided into explicit layers while retaining one compatible Agent
+Intent protocol.
 
-Published prereleases use the npm `next` tag. Production applications should
-pin an exact package version.
+| Layer | Responsibility |
+| --- | --- |
+| Knowledge | Entities, immutable evidence, bitemporal assertions, uncertainty, resolution, retrieval, lineage, and explanation |
+| Agency | Guarded workflow revisions, controlled effects, idempotency, attempts, reconciliation, and receipts |
+| Retail compatibility | Existing inventory reservation, payment, and order-expiry behavior |
+
+The embedded TypeScript API exposes the layers directly:
 
 ```ts
 import { AgenticKernel, SqliteStore } from "agentic-data-kernel";
@@ -134,21 +180,110 @@ import { AgenticKernel, SqliteStore } from "agentic-data-kernel";
 const store = new SqliteStore(".data/app.db");
 const kernel = new AgenticKernel(store);
 
-const { knowledge, agency, retail } = kernel;
+const service = kernel.knowledge.putEntity(
+  {
+    tenantId: "example",
+    principalId: "monitor",
+    purpose: "incident-response"
+  },
+  {
+    entityId: "service:checkout",
+    entityType: "service",
+    canonicalName: "Checkout API"
+  }
+);
+
+const workflow = kernel.agency.createWorkflow(
+  {
+    tenantId: "example",
+    principalId: "responder",
+    purpose: "incident-response"
+  },
+  {
+    instanceId: "incident:1001",
+    workflowType: "incident_response",
+    initialState: "alerted",
+    data: { service: service.entityId }
+  }
+);
 ```
 
-The npm package provides:
+Existing top-level methods and all Agent Intent operation names remain
+available. TypeScript and HTTP clients submit the same typed envelope, and the
+embedded CLI accepts it from a file:
 
-- `agentic-data-kernel` and `agentic-data` for the embedded CLI;
-- `agentic-data-prod` for production administration and runtime commands;
-- `agentic-data-kernel/production` for PostgreSQL integrations.
+```json
+{
+  "protocolVersion": "0.1",
+  "requestId": "observe-1001",
+  "idempotencyKey": "observe-1001",
+  "principal": {
+    "tenantId": "example",
+    "principalId": "monitor",
+    "purpose": "incident-response"
+  },
+  "operation": {
+    "op": "assert",
+    "assertion": {
+      "subjectEntityId": "service:checkout",
+      "predicate": "error_rate",
+      "object": {
+        "type": "number",
+        "value": 0.42
+      },
+      "kind": "observation",
+      "sourceArtifactId": "artifact:alert-1001"
+    }
+  }
+}
+```
 
-## Source quick start
+MCP tools accept typed operation fields and bind them to the authenticated
+process identity. The production CLI provides administration, worker,
+reconciliation, load, and explain commands rather than a general envelope
+execution command.
 
-Requirements:
+See the [API Reference](docs/API.md).
 
-- Node.js 22.19 or newer
-- npm 10 or newer
+## When it fits
+
+Use Agentic Data Kernel when several of these are true:
+
+- source disagreement and later correction must remain inspectable;
+- valid time and system time both matter;
+- decisions and external actions need evidence and policy lineage;
+- workflows must resume safely after a restart;
+- provider timeouts can leave an action in an unknown state;
+- tenant, purpose, budget, and effect authority must be enforced below
+  application prompts;
+- agents need bounded, machine-readable causal context.
+
+It is probably the wrong tool for simple CRUD, append-only analytics, cache
+workloads, or systems where minimum write latency and minimum schema footprint
+matter more than durable agency semantics.
+
+## Install and run
+
+The current release is `0.3.0-alpha.4`. Prereleases use the npm `next` tag.
+Pin an exact version for production evaluation.
+
+```powershell
+npm install agentic-data-kernel@next
+npx --yes agentic-data-kernel@next example --db .data\example.db
+```
+
+Package entry points and commands:
+
+| Interface | Entry point |
+| --- | --- |
+| Embedded TypeScript | `agentic-data-kernel` |
+| PostgreSQL TypeScript | `agentic-data-kernel/production` |
+| Embedded CLI | `agentic-data` or `agentic-data-kernel` |
+| Production CLI | `agentic-data-prod` |
+| MCP | `agentic-data-kernel mcp` or `agentic-data-prod mcp` |
+| HTTP | `POST /v1/execute` |
+
+Source checkout:
 
 ```powershell
 npm install
@@ -157,240 +292,97 @@ npm test
 npm run example
 ```
 
-The sample workflow:
+Integration examples cover the TypeScript library, MCP, authenticated HTTP,
+production retail, the SRE scenario, embedding providers, and effect
+receivers. See [Integrations](docs/INTEGRATIONS.md).
 
-1. stores conflicting supplier claims about a product;
-2. preserves both claims and returns an explicit conflict;
-3. searches across a customer, product, and incident graph;
-4. reserves inventory transactionally;
-5. creates a durable payment effect;
-6. records the provider outcome;
-7. confirms the order without duplicating inventory changes on replay.
+## Production profile
 
-The sample database is written to `.data\example.db`.
-
-Node's built-in `node:sqlite` API is experimental in Node 22. This affects only
-the development profile.
-
-## Development CLI
-
-Build:
+The production profile uses PostgreSQL 18, pgvector, forced row-level
+security, scoped and purpose-bound API keys, encrypted artifact storage,
+configurable embedding spaces, effect budgets, authorization fences,
+reconciliation workers, metrics, backups, and Caddy TLS.
 
 ```powershell
-npm run build
-```
-
-Initialize a database:
-
-```powershell
-node --no-warnings dist\cli.js init --db .data\agentic.db
-```
-
-Execute an operation:
-
-```powershell
-node --no-warnings dist\cli.js execute `
-  --db .data\agentic.db `
-  --file examples\put-product.json
-```
-
-Inspect state with read-only SQL:
-
-```powershell
-node --no-warnings dist\cli.js sql `
-  --db .data\agentic.db `
-  --query "SELECT assertion_id, predicate, status FROM assertions"
-```
-
-The SQL interface accepts `SELECT`, `EXPLAIN`, and schema-inspection PRAGMAs.
-
-## Development HTTP
-
-```powershell
-npm run serve
-```
-
-Default address: `http://127.0.0.1:4318`
-
-| Route | Purpose |
-| --- | --- |
-| `GET /health` | Liveness |
-| `GET /v1/catalog` | Supported operations and guarantees |
-| `POST /v1/execute` | Execute one Agent Intent operation |
-
-The development server is loopback-only and has no network SQL route.
-
-## MCP
-
-Start the development MCP server from a published package:
-
-```powershell
-npx --yes agentic-data-kernel@next mcp --db .data\agentic.db
-```
-
-Or start it from a source checkout:
-
-```powershell
-npm run mcp
-```
-
-It publishes `agentic-data://catalog` and these tools:
-
-- `execute_intent`
-- `search_knowledge`
-- `resolve_claims`
-- `explain_trace`
-- `reserve_inventory`
-- `get_machine`
-
-Use `npm run prod:mcp` for an authenticated PostgreSQL-backed MCP process.
-
-## Integration examples
-
-| Example | Command |
-| --- | --- |
-| TypeScript library | `npm run example:library` |
-| MCP client | `npm run example:mcp` |
-| Authenticated production HTTP | `npm run example:production-http` |
-| Production retail workflow | `npm run example:production-retail` |
-| Flagship SRE scenario | `npm run example:sre` |
-| Embedding provider | `npm run example:embedding` |
-| Embedding protocol helper | `npm run example:mock-embeddings` |
-| Effect receiver contract | `npm run example:mock-effects` |
-
-Setup, environment variables, and receiver contracts are documented in
-[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
-
-## PostgreSQL deployment
-
-Requirements:
-
-- Docker with Compose
-- An OpenAI-compatible embedding endpoint
-- Generated database, authentication, and artifact-encryption secrets
-
-Use the versioned production image:
-
-```powershell
-Copy-Item .env.example .env
 .\scripts\generate-secrets.ps1
+Copy-Item .env.example .env
+```
+
+Replace every placeholder in `.env` with the generated values, database
+passwords, and embedding-provider configuration before continuing:
+
+```powershell
 $env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:0.3.0-alpha.4"
 docker compose --profile server pull
 docker compose --profile server up --no-build
 ```
 
-Or build the image from the checked-out source:
-
-```powershell
-Copy-Item .env.example .env
-.\scripts\generate-secrets.ps1
-docker compose --profile server up --build
-```
-
-The included deployment:
-
-- creates a non-superuser runtime database role;
-- applies checksum-verified migrations separately;
-- configures one indexed embedding space from the selected provider model,
-  version, and dimensions;
-- initializes artifact-directory ownership;
-- runs the API and effect worker independently;
-- publishes only the Caddy TLS endpoint;
-- keeps PostgreSQL bound to loopback by default.
-
-Full setup and operating procedures are in
-[docs/PRODUCTION.md](docs/PRODUCTION.md).
-
-## Agent Intent
-
-Version 0.1 executes one typed operation per envelope:
-
-```json
-{
-  "protocolVersion": "0.1",
-  "requestId": "claim-1",
-  "idempotencyKey": "claim-1",
-  "principal": {
-    "tenantId": "example-retail",
-    "principalId": "catalog-agent",
-    "purpose": "catalog-ingestion"
-  },
-  "operation": {
-    "op": "assert",
-    "assertion": {
-      "subjectEntityId": "product:sku-17",
-      "predicate": "packaged_weight",
-      "object": {
-        "type": "number",
-        "value": 4.8,
-        "unit": "kg"
-      },
-      "kind": "reported_fact",
-      "strength": {
-        "type": "rank",
-        "value": "normal"
-      }
-    }
-  }
-}
-```
-
-The production server derives authority from the authenticated API key and
-rejects envelopes whose tenant, principal, or purpose does not match.
+PostgreSQL remains the transactional storage engine. The kernel supplies the
+agent-facing data model, invariants, and interfaces. See
+[Production Profile](docs/PRODUCTION.md) and
+[Threat Model](docs/THREAT_MODEL.md).
 
 ## Architecture
 
 ```text
-HTTP / MCP / TypeScript / CLI
-             |
-     Agent Intent validation
-             |
-   identity, scope, purpose
-             |
-  Knowledge layer
-   | assertions, evidence, retrieval
-   | resolution, lineage, explanation
-             +
-   Agency layer
-   | workflows, effects, receipts
-             +
+TypeScript / HTTP / MCP / CLI
+              |
+      Agent Intent validation
+              |
+ identity + scope + purpose + budget
+              |
+   +----------+-----------+
+   |                      |
+Knowledge layer       Agency layer
+evidence              workflow revisions
+assertions             authorized effects
+resolution             attempts and receipts
+retrieval              reconciliation
+lineage                verification
+   |                      |
+   +----------+-----------+
+              |
  retail compatibility adapter
-   | inventory, orders, payment timers
-             |
- SQLite development adapter
-             or
+              |
+ SQLite development profile
+              or
  PostgreSQL + pgvector + RLS
 ```
 
+## Current boundaries
+
+- The release is alpha.
+- Production targets one PostgreSQL primary.
+- The default rate limiter is process-local.
+- One embedding model, version, and dimension is active per deployment.
+- Indexed vector dimensions are limited to 2000.
+- Changing an embedding space after assertions exist requires explicit
+  re-embedding.
+- Generic workflow transition policy remains application-owned.
+- Effect receivers must honor idempotency keys.
+- The SRE telemetry, embeddings, and remediation provider are synthetic.
+- Projection epochs, multi-operation plans, and context-package optimization
+  are not implemented.
+
+See [Benefits and Tradeoffs](docs/TRADEOFFS.md) for a fuller fit assessment.
+
 ## Documentation
 
-- [Use cases](docs/USE_CASES.md)
-- [Benefits and tradeoffs](docs/TRADEOFFS.md)
-- [Integration guide](docs/INTEGRATIONS.md)
 - [API reference](docs/API.md)
-- [Production profile](docs/PRODUCTION.md)
 - [Flagship SRE scenario](docs/SRE_SCENARIO.md)
 - [Explain and trace](docs/EXPLAIN.md)
-- [SRE comparison](benchmarks/sre/README.md)
-- [Release process](docs/RELEASING.md)
+- [SRE benchmark](benchmarks/sre/README.md)
+- [Benefits and tradeoffs](docs/TRADEOFFS.md)
+- [Use cases](docs/USE_CASES.md)
+- [Integration guide](docs/INTEGRATIONS.md)
+- [Production profile](docs/PRODUCTION.md)
 - [Threat model](docs/THREAT_MODEL.md)
+- [Release process](docs/RELEASING.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 - [Support](SUPPORT.md)
 - [Code of conduct](CODE_OF_CONDUCT.md)
 - [Changelog](CHANGELOG.md)
-
-## Boundaries
-
-- The included deployment uses one PostgreSQL primary.
-- The default rate limiter is process-local.
-- One embedding model, version, and dimension is active per deployment.
-- HNSW-indexed vectors are limited to 2000 dimensions.
-- Changing the active embedding space after assertions exist requires an
-  explicit re-embedding migration.
-- Effect receivers must honor idempotency keys.
-- Projection epochs, multi-operation plans, and context-package optimization
-  are not yet implemented.
 
 ## License
 

@@ -69,8 +69,9 @@ same operation and result types rather than separate domain APIs.
 ## Expected benefits that are not yet proven
 
 The architecture is intended to reduce application glue and improve the
-reliability of long-running agent workflows. The project has not yet published
-comparative evidence that it:
+reliability of long-running agent workflows. The SRE benchmark now provides
+structural and correctness evidence, but it does not establish that the
+project:
 
 - lowers total infrastructure cost;
 - improves throughput or latency;
@@ -145,7 +146,8 @@ application database.
 - HNSW-indexed vectors are limited to 2000 dimensions.
 - Model or dimension changes require explicit re-embedding once assertions
   exist.
-- The exposed durable workflow is currently retail order and payment focused.
+- Generic workflow state graphs and transition policy remain application-owned.
+- The built-in retail order and payment flow remains a compatibility adapter.
 - Projection epochs and multi-operation plans are not implemented.
 
 ## Comparison with common alternatives
