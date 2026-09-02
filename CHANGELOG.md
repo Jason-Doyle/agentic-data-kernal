@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Rebuilt the README around the agent-first thesis, SRE proof, causal trace,
+  comparative evidence, measured costs, and explicit fit boundaries.
+
 ## 0.3.0-alpha.4
 
 - Added typed Knowledge and Agency operation layers to the embedded API and
