@@ -425,13 +425,13 @@ function executeOperation(
   const { operation, principal } = envelope;
   switch (operation.op) {
     case "put_entity":
-      return kernel.putEntity(principal, operation.entity);
+      return kernel.knowledge.putEntity(principal, operation.entity);
     case "put_artifact":
-      return kernel.putArtifact(principal, operation.artifact);
+      return kernel.knowledge.putArtifact(principal, operation.artifact);
     case "assert":
-      return kernel.assert(principal, operation.assertion);
+      return kernel.knowledge.assert(principal, operation.assertion);
     case "resolve":
-      return kernel.resolve(
+      return kernel.knowledge.resolve(
         principal.tenantId,
         operation.subjectEntityId,
         operation.predicate,
@@ -443,7 +443,7 @@ function executeOperation(
         },
       );
     case "search":
-      return kernel.search(principal.tenantId, {
+      return kernel.knowledge.search(principal.tenantId, {
         text: operation.text,
         predicate: operation.predicate,
         kind: operation.kind,
@@ -455,43 +455,46 @@ function executeOperation(
         limit: operation.limit,
       });
     case "create_workflow":
-      return kernel.createWorkflow(principal, operation);
+      return kernel.agency.createWorkflow(principal, operation);
     case "advance_workflow":
-      return kernel.advanceWorkflow(principal, operation);
+      return kernel.agency.advanceWorkflow(principal, operation);
     case "request_effect":
-      return kernel.requestEffect(principal, operation);
+      return kernel.agency.requestEffect(principal, operation);
     case "add_lineage":
-      return kernel.addLineage(principal, operation);
+      return kernel.knowledge.addLineage(principal, operation);
     case "explain":
-      return kernel.explain(
+      return kernel.knowledge.explain(
         principal.tenantId,
         operation.target,
         operation.maxDepth,
       );
     case "record_effect_outcome":
-      return kernel.recordEffectOutcome(principal, operation);
+      return kernel.agency.recordEffectOutcome(principal, operation);
     case "seed_inventory":
-      return kernel.seedInventory(
+      return kernel.retail.seedInventory(
         principal,
         operation.sku,
         operation.location,
         operation.quantityOnHand,
       );
     case "reserve_inventory":
-      return kernel.reserveInventory(principal, operation);
+      return kernel.retail.reserveInventory(principal, operation);
     case "request_payment":
-      return kernel.requestPayment(principal, operation);
+      return kernel.retail.requestPayment(principal, operation);
     case "record_payment_outcome":
-      return kernel.recordPaymentOutcome(principal, operation);
+      return kernel.retail.recordPaymentOutcome(principal, operation);
     case "get_machine":
-      return kernel.getMachineRecord(
+      return kernel.agency.getMachine(
         principal.tenantId,
         operation.instanceId,
       );
     case "list_effects":
-      return kernel.listEffects(principal.tenantId, operation.instanceId);
+      return kernel.agency.listEffects(
+        principal.tenantId,
+        operation.instanceId,
+      );
     case "process_timers":
-      return kernel.processDueTimers(principal, operation.asOf);
+      return kernel.retail.processTimers(principal, operation.asOf);
     default:
       return assertNever(operation);
   }

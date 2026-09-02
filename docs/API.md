@@ -37,26 +37,48 @@ separate idempotency namespace.
 In the PostgreSQL profile, the supplied principal must exactly match the
 authenticated API key.
 
+## Operation layers
+
+Agent Intent keeps one backward-compatible operation union and one execution
+endpoint. Operations are now grouped into three explicit layers:
+
+| Layer | Responsibility |
+| --- | --- |
+| Knowledge | Entities, artifacts, temporal assertions, resolution, retrieval, lineage, and explanation |
+| Agency | Generic workflows, controlled effects, workflow reads, and effect reads |
+| Retail compatibility | Inventory reservation, payment, order expiry, and existing retail workflow behavior |
+
+The embedded TypeScript API exposes these as `kernel.knowledge`,
+`kernel.agency`, and `kernel.retail`. Existing methods such as
+`kernel.assert(...)`, `kernel.createWorkflow(...)`, and
+`kernel.reserveInventory(...)` remain available with unchanged behavior.
+`kernel.agency.getMachine(...)` returns either a generic workflow or retail
+order record, while `kernel.retail.getOrder(...)` requires a retail order.
+
+The PostgreSQL, HTTP, MCP, and CLI profiles continue to use the same Agent
+Intent envelope. `GET /v1/catalog` now reports the layer for each available
+operation. No operation name was removed or renamed.
+
 ## Operations
 
-| Operation | Scope | Description |
-| --- | --- | --- |
-| `put_entity` | `data:write` | Create or update an entity identity |
-| `put_artifact` | `data:write` | Store immutable source evidence |
-| `assert` | `data:write` | Add or supersede a typed temporal assertion |
-| `resolve` | `data:read` | Return known, unknown, conflicting, or policy-selected values |
-| `search` | `data:read` | Run hybrid retrieval with optional graph filters |
-| `create_workflow` | `workflows:run` | Create a non-retail durable workflow |
-| `advance_workflow` | `workflows:run` | Commit a guarded workflow transition |
-| `request_effect` | `effects:write` | Request an authorized generic external effect |
-| `add_lineage` | `data:write` | Add a typed causal link between durable records |
-| `explain` | `data:read` | Traverse bounded typed causal lineage |
-| `seed_inventory` | `inventory:admin` | Create initial inventory for a SKU and location |
-| `reserve_inventory` | `orders:write` | Reserve stock and start an order workflow |
-| `request_payment` | `effects:write` | Reserve effect budget and create a payment intent |
-| `get_machine` | `data:read` | Read current workflow state |
-| `list_effects` | `data:read` | Read effect state |
-| `process_timers` | `workflows:run` | Process timers using database server time |
+| Operation | Layer | Scope | Description |
+| --- | --- | --- | --- |
+| `put_entity` | Knowledge | `data:write` | Create or update an entity identity |
+| `put_artifact` | Knowledge | `data:write` | Store immutable source evidence |
+| `assert` | Knowledge | `data:write` | Add or supersede a typed temporal assertion |
+| `resolve` | Knowledge | `data:read` | Return known, unknown, conflicting, or policy-selected values |
+| `search` | Knowledge | `data:read` | Run hybrid retrieval with optional graph filters |
+| `add_lineage` | Knowledge | `data:write` | Add a typed causal link between durable records |
+| `explain` | Knowledge | `data:read` | Traverse bounded typed causal lineage |
+| `create_workflow` | Agency | `workflows:run` | Create a non-retail durable workflow |
+| `advance_workflow` | Agency | `workflows:run` | Commit a guarded workflow transition |
+| `request_effect` | Agency | `effects:write` | Request an authorized generic external effect |
+| `get_machine` | Agency | `data:read` | Read current workflow state |
+| `list_effects` | Agency | `data:read` | Read effect state |
+| `seed_inventory` | Retail compatibility | `inventory:admin` | Create initial inventory for a SKU and location |
+| `reserve_inventory` | Retail compatibility | `orders:write` | Reserve stock and start an order workflow |
+| `request_payment` | Retail compatibility | `effects:write` | Reserve effect budget and create a payment intent |
+| `process_timers` | Retail compatibility | `workflows:run` | Process retail reservation timers using database server time |
 
 `record_payment_outcome` exists only in the development profile. The production
 profile accepts terminal effect state only from the effect worker.
@@ -221,7 +243,10 @@ Temporal, status, tenant, optional field, and graph constraints remain inside
 candidate selection so bounded retrieval does not reintroduce stale or
 out-of-scope rows.
 
-## Retail workflow
+## Retail compatibility workflow
+
+Retail operations remain supported behind the compatibility adapter while the
+generic Agency layer stays independent of retail order invariants.
 
 ```text
 new -> reserved -> payment_pending -> confirmed

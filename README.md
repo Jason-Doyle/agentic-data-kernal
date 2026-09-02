@@ -22,6 +22,9 @@ single governed system. It is designed for applications that need to answer:
 - What conflicts with it?
 - Which workflow or external action depended on it?
 
+The public API separates these responsibilities into a Knowledge layer, an
+Agency layer, and a compatibility adapter for the original retail workflow.
+
 ## Capabilities
 
 - Bitemporal assertions with evidence, epistemic kind, perspective, and typed
@@ -130,6 +133,8 @@ import { AgenticKernel, SqliteStore } from "agentic-data-kernel";
 
 const store = new SqliteStore(".data/app.db");
 const kernel = new AgenticKernel(store);
+
+const { knowledge, agency, retail } = kernel;
 ```
 
 The npm package provides:
@@ -342,12 +347,15 @@ HTTP / MCP / TypeScript / CLI
              |
    identity, scope, purpose
              |
- knowledge + workflow kernel
-   | assertions and evidence
-   | conflict resolution
-   | hybrid retrieval
-   | timers and state machines
-   | effects and receipts
+  Knowledge layer
+   | assertions, evidence, retrieval
+   | resolution, lineage, explanation
+             +
+   Agency layer
+   | workflows, effects, receipts
+             +
+ retail compatibility adapter
+   | inventory, orders, payment timers
              |
  SQLite development adapter
              or

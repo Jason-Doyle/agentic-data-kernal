@@ -4,6 +4,13 @@ import {
   summarizeTraceJson,
   traceEndpointKey,
 } from "./explain.js";
+import {
+  AgencyLayer,
+  DEVELOPMENT_OPERATION_NAMES,
+  KnowledgeLayer,
+  operationLayerCatalog,
+  RetailCompatibilityAdapter,
+} from "./layers.js";
 import type {
   AdvanceWorkflowInput,
   ArtifactInput,
@@ -12,7 +19,6 @@ import type {
   AssertionQuery,
   AssertionRecord,
   AssertionStatus,
-  CatalogDescription,
   CreateWorkflowInput,
   EffectRecord,
   EffectOutcomeInput,
@@ -26,7 +32,9 @@ import type {
   JsonValue,
   LineageEdgeRecord,
   LineageEndpoint,
+  LineageInput,
   LineageRelation,
+  LayeredCatalogDescription,
   MachineRecord,
   MachineState,
   OrderData,
@@ -227,10 +235,18 @@ export class KernelError extends Error {
 }
 
 export class AgenticKernel {
+  public readonly knowledge: KnowledgeLayer;
+  public readonly agency: AgencyLayer;
+  public readonly retail: RetailCompatibilityAdapter;
+
   public constructor(
     private readonly store: SqliteStore,
     private readonly clock: () => Date = () => new Date(),
-  ) {}
+  ) {
+    this.knowledge = new KnowledgeLayer(this);
+    this.agency = new AgencyLayer(this);
+    this.retail = new RetailCompatibilityAdapter(this);
+  }
 
   public transaction<T>(operation: () => T): T {
     return this.store.transaction(operation);
@@ -1064,11 +1080,7 @@ export class AgenticKernel {
 
   public addLineage(
     principal: PrincipalContext,
-    input: {
-      relation: LineageRelation;
-      from: LineageEndpoint;
-      to: LineageEndpoint;
-    },
+    input: LineageInput,
   ): LineageEdgeRecord {
     return this.store.transaction(() =>
       this.insertLineage(principal, input),
@@ -1861,30 +1873,14 @@ export class AgenticKernel {
     }
   }
 
-  public catalog(): CatalogDescription {
+  public catalog(): LayeredCatalogDescription {
     return {
       protocolVersion: "0.1",
       storage: "Node.js embedded SQLite with replaceable storage boundary",
-      operations: [
-        "put_entity",
-        "put_artifact",
-        "assert",
-        "resolve",
-        "search",
-        "create_workflow",
-        "advance_workflow",
-        "request_effect",
-        "add_lineage",
-        "explain",
-        "record_effect_outcome",
-        "seed_inventory",
-        "reserve_inventory",
-        "request_payment",
-        "record_payment_outcome",
-        "get_machine",
-        "list_effects",
-        "process_timers",
-      ],
+      operations: [...DEVELOPMENT_OPERATION_NAMES],
+      operationLayers: operationLayerCatalog(
+        DEVELOPMENT_OPERATION_NAMES,
+      ),
       epistemicKinds: [
         "observation",
         "reported_fact",
