@@ -41,6 +41,8 @@ try {
     "migrations/postgres/001_core.sql",
     "migrations/postgres/002_embedding_space.sql",
     "migrations/postgres/003_generic_agency.sql",
+    "benchmarks/sre/README.md",
+    "benchmarks/sre/baseline-schema.sql",
     "README.md",
     "LICENSE",
   ]) {

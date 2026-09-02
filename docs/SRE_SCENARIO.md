@@ -124,3 +124,7 @@ adapters. The scenario proves persistence, authorization, lineage, restart,
 idempotency, reconciliation, and verification behavior. It does not claim
 production incident-detection quality or benchmark superiority over another
 stack.
+
+The same behavior contract is implemented independently with conventional
+PostgreSQL application tables under
+[SRE Incident Benchmark](../benchmarks/sre/README.md).

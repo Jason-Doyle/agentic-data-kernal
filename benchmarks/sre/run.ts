@@ -37,9 +37,14 @@ const control = new Client({
 });
 const measurements: BenchmarkMeasurement[] = [];
 const workspace = mkdtempSync(join(tmpdir(), "agentic-sre-benchmark-"));
+let postgresVersion = "";
 
 try {
   await control.connect();
+  const version = await control.query<{ server_version: string }>(
+    "SHOW server_version",
+  );
+  postgresVersion = version.rows[0]?.server_version ?? "unknown";
   for (let repetition = 1; repetition <= repetitions; repetition += 1) {
     measurements.push(
       await runVariant("conventional-postgres", repetition),
@@ -144,8 +149,10 @@ function createSummary(values: BenchmarkMeasurement[]) {
     repetitions,
     environment: {
       node: process.version,
+      postgres: postgresVersion,
       commit: gitCommit(),
     },
+    runs: values,
     correctness: {
       conventionalPostgres: passSummary(baseline),
       agenticDataKernel: passSummary(kernel),

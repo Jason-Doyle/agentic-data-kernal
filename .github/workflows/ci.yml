@@ -70,6 +70,10 @@ jobs:
           DATABASE_URL: postgresql://postgres:ci-administrator-password@127.0.0.1:54329/agentic_data
         run: node dist/production/cli.js migrate
       - run: npm test
+      - name: Run SRE comparison
+        env:
+          BENCHMARK_REPETITIONS: 1
+        run: npm run benchmark:sre
       - name: Show container logs
         if: failure()
         run: docker compose logs postgres

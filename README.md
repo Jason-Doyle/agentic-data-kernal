@@ -77,6 +77,21 @@ and demonstrated invariants.
 
 The example also prints a human-readable trace rooted at the rollback effect.
 
+## SRE comparison
+
+The repository implements the same incident with conventional PostgreSQL
+application tables and with Agentic Data Kernel. Both variants must resolve
+with one delivery, one reconciliation, and complete durable audit answers.
+
+```powershell
+npm run benchmark:sre
+```
+
+The comparison reports application-owned code and schema separately from total
+operated infrastructure, database footprint, and informational runtime. See
+[benchmarks/sre/README.md](benchmarks/sre/README.md) and the generated
+[benchmark report](benchmarks/sre/results/report.md).
+
 ## Project status
 
 The current release is `0.3.0-alpha.2`.
@@ -348,6 +363,7 @@ HTTP / MCP / TypeScript / CLI
 - [Production profile](docs/PRODUCTION.md)
 - [Flagship SRE scenario](docs/SRE_SCENARIO.md)
 - [Explain and trace](docs/EXPLAIN.md)
+- [SRE comparison](benchmarks/sre/README.md)
 - [Release process](docs/RELEASING.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Security policy](SECURITY.md)
