@@ -8,6 +8,9 @@
 - Added decision- and policy-bound generic effects that reuse authorization,
   budgets, leases, retries, and reconciliation without invoking retail
   finalization.
+- Added a deterministic SRE scenario covering contradictory evidence,
+  confidence revision, explicit resolution, restart, ambiguous remediation,
+  idempotent reconciliation, and final verification.
 
 ## 0.2.0-alpha.2
 

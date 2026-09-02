@@ -131,7 +131,7 @@ verification, support policy, remedy limits, and approval rules.
 
 ## Incident response
 
-**Support level:** Supported foundation
+**Support level:** Supported
 
 Operational events can be represented without treating every hypothesis as a
 confirmed cause:
@@ -148,8 +148,8 @@ workflow state, decision- and policy-bound effect authorization, retries,
 unknown-outcome reconciliation, and execution history. Integrations with
 telemetry systems and deployment platforms remain application adapters.
 
-The next project phase builds the canonical end-to-end SRE scenario on these
-foundations.
+The canonical scenario is documented in
+[Flagship SRE Scenario](SRE_SCENARIO.md).
 
 ## Controlled external actions
 
