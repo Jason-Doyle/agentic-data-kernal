@@ -38,7 +38,8 @@ It also includes a portable source hash over the benchmark, production kernel,
 migrations, lockfile, and PostgreSQL container configuration.
 
 CI runs the comparison and verifies that the committed report is generated
-from `summary.json` and that the evidence source hash is current.
+from `summary.json`, contains three correct runs per variant, has aggregates
+that match the raw runs, and has a current evidence source hash.
 
 ## Metrics
 

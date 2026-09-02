@@ -27,6 +27,7 @@ import {
 const repetitions = positiveInteger(
   process.env.BENCHMARK_REPETITIONS ?? "3",
 );
+const publishedRepetitions = 3;
 const adminBase =
   process.env.BENCHMARK_DATABASE_URL ??
   required("PRODUCTION_TEST_MIGRATION_DATABASE_URL");
@@ -143,24 +144,43 @@ async function databaseMetrics(databaseUrl: string): Promise<{
   }
 }
 
-function createSummary(values: BenchmarkMeasurement[]) {
+function createSummary(
+  values: BenchmarkMeasurement[],
+  metadata: {
+    repetitions: number;
+    node: string;
+    postgres: string;
+    commit: string;
+  } = {
+    repetitions,
+    node: process.version,
+    postgres: postgresVersion,
+    commit: gitCommit(),
+  },
+) {
   const byVariant = (variant: BenchmarkMeasurement["outcome"]["variant"]) =>
     values.filter((value) => value.outcome.variant === variant);
   const baseline = byVariant("conventional-postgres");
   const kernel = byVariant("agentic-data-kernel");
   return {
     schemaVersion: 1,
-    repetitions,
+    repetitions: metadata.repetitions,
     environment: {
-      node: process.version,
-      postgres: postgresVersion,
-      commit: gitCommit(),
+      node: metadata.node,
+      postgres: metadata.postgres,
+      commit: metadata.commit,
       sourceHash: benchmarkSourceHash(),
     },
     runs: values,
     correctness: {
-      conventionalPostgres: passSummary(baseline),
-      agenticDataKernel: passSummary(kernel),
+      conventionalPostgres: passSummary(
+        baseline,
+        metadata.repetitions,
+      ),
+      agenticDataKernel: passSummary(
+        kernel,
+        metadata.repetitions,
+      ),
     },
     applicationSurface: {
       conventionalPostgres: {
@@ -236,10 +256,13 @@ function createSummary(values: BenchmarkMeasurement[]) {
   };
 }
 
-function passSummary(values: BenchmarkMeasurement[]) {
+function passSummary(
+  values: BenchmarkMeasurement[],
+  attempted: number,
+) {
   return {
     passed: values.length,
-    attempted: repetitions,
+    attempted,
     deliveryCounts: values.map((value) => value.outcome.deliveryCount),
     reconciliationCounts: values.map(
       (value) => value.outcome.reconciliationCount,
@@ -322,13 +345,46 @@ function verifyPublishedResults(): void {
   const resultsDirectory = resolve("benchmarks", "sre", "results");
   const summaryPath = join(resultsDirectory, "summary.json");
   const reportPath = join(resultsDirectory, "report.md");
-  const published = JSON.parse(
+  const published = parsePublishedSummary(
     readFileSync(summaryPath, "utf8"),
-  ) as ReturnType<typeof createSummary>;
+  );
+  if (published.repetitions !== publishedRepetitions) {
+    throw new Error(
+      `Published SRE benchmark evidence must contain ${publishedRepetitions} repetitions`,
+    );
+  }
+  const baseline = published.runs.filter(
+    (value) => value.outcome.variant === "conventional-postgres",
+  );
+  const kernel = published.runs.filter(
+    (value) => value.outcome.variant === "agentic-data-kernel",
+  );
+  if (
+    baseline.length !== publishedRepetitions ||
+    kernel.length !== publishedRepetitions
+  ) {
+    throw new Error(
+      "Published SRE benchmark evidence must contain three runs per variant",
+    );
+  }
+  for (const measurement of published.runs) {
+    assertCorrectness(measurement.outcome);
+  }
   const expectedHash = benchmarkSourceHash();
-  if (published.environment?.sourceHash !== expectedHash) {
+  if (published.environment.sourceHash !== expectedHash) {
     throw new Error(
       "Published SRE benchmark evidence is stale; regenerate the results",
+    );
+  }
+  const expectedSummary = createSummary(published.runs, {
+    repetitions: published.repetitions,
+    node: published.environment.node,
+    postgres: published.environment.postgres,
+    commit: published.environment.commit,
+  });
+  if (JSON.stringify(published) !== JSON.stringify(expectedSummary)) {
+    throw new Error(
+      "Published SRE benchmark aggregates do not match the raw runs",
     );
   }
   const expectedReport = normalizeLineEndings(renderReport(published));
@@ -340,6 +396,74 @@ function verifyPublishedResults(): void {
       "Published SRE benchmark report does not match summary.json",
     );
   }
+}
+
+function parsePublishedSummary(
+  source: string,
+): ReturnType<typeof createSummary> {
+  const value: unknown = JSON.parse(source);
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.repetitions !== "number" ||
+    !Array.isArray(value.runs) ||
+    !value.runs.every(isBenchmarkMeasurement) ||
+    !isRecord(value.environment) ||
+    typeof value.environment.node !== "string" ||
+    typeof value.environment.postgres !== "string" ||
+    typeof value.environment.commit !== "string" ||
+    typeof value.environment.sourceHash !== "string"
+  ) {
+    throw new Error("Published SRE benchmark summary is invalid");
+  }
+  return value as ReturnType<typeof createSummary>;
+}
+
+function isBenchmarkMeasurement(
+  value: unknown,
+): value is BenchmarkMeasurement {
+  if (
+    !isRecord(value) ||
+    typeof value.operatedTables !== "number" ||
+    !Number.isInteger(value.operatedTables) ||
+    value.operatedTables < 0 ||
+    typeof value.databaseBytes !== "number" ||
+    !Number.isFinite(value.databaseBytes) ||
+    value.databaseBytes < 0 ||
+    !isRecord(value.outcome)
+  ) {
+    return false;
+  }
+  const outcome = value.outcome;
+  if (!isRecord(outcome.auditAnswers)) {
+    return false;
+  }
+  const auditAnswers = outcome.auditAnswers;
+  return (
+    (
+      outcome.variant === "conventional-postgres" ||
+      outcome.variant === "agentic-data-kernel"
+    ) &&
+    typeof outcome.finalState === "string" &&
+    typeof outcome.effectStatus === "string" &&
+    typeof outcome.deliveryCount === "number" &&
+    Number.isInteger(outcome.deliveryCount) &&
+    typeof outcome.reconciliationCount === "number" &&
+    Number.isInteger(outcome.reconciliationCount) &&
+    typeof outcome.runtimeReloads === "number" &&
+    Number.isInteger(outcome.runtimeReloads) &&
+    typeof outcome.durationMs === "number" &&
+    Number.isFinite(outcome.durationMs) &&
+    outcome.durationMs >= 0 &&
+    Object.keys(auditAnswers).length === auditQuestions.length &&
+    auditQuestions.every(
+      (question) => typeof auditAnswers[question] === "boolean",
+    )
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function testConfig(
