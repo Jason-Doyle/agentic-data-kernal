@@ -1,0 +1,227 @@
+{
+  "schemaVersion": 1,
+  "repetitions": 3,
+  "environment": {
+    "node": "v22.22.2",
+    "postgres": "18.6 (Debian 18.6-1.pgdg12+2)",
+    "commit": "ee8e477e253d249b532adf16cbeefafd13d898c3",
+    "sourceHash": "7c5135c62998eb55986b768b3967176935630e60c0547402515d20abae9e2c4f"
+  },
+  "runs": [
+    {
+      "outcome": {
+        "variant": "conventional-postgres",
+        "finalState": "resolved",
+        "effectStatus": "succeeded",
+        "deliveryCount": 1,
+        "reconciliationCount": 1,
+        "runtimeReloads": 2,
+        "auditAnswers": {
+          "initiating observation": true,
+          "competing hypotheses": true,
+          "confidence revisions": true,
+          "selected hypothesis and policy": true,
+          "decision and authorization": true,
+          "effect target and idempotency key": true,
+          "ambiguous delivery attempt": true,
+          "provider reconciliation": true,
+          "verification and terminal state": true
+        },
+        "durationMs": 55.936999999999955
+      },
+      "operatedTables": 8,
+      "databaseBytes": 540672
+    },
+    {
+      "outcome": {
+        "variant": "agentic-data-kernel",
+        "finalState": "resolved",
+        "effectStatus": "succeeded",
+        "deliveryCount": 1,
+        "reconciliationCount": 1,
+        "runtimeReloads": 2,
+        "auditAnswers": {
+          "initiating observation": true,
+          "competing hypotheses": true,
+          "confidence revisions": true,
+          "selected hypothesis and policy": true,
+          "decision and authorization": true,
+          "effect target and idempotency key": true,
+          "ambiguous delivery attempt": true,
+          "provider reconciliation": true,
+          "verification and terminal state": true
+        },
+        "durationMs": 829.8143
+      },
+      "operatedTables": 18,
+      "databaseBytes": 1572864
+    },
+    {
+      "outcome": {
+        "variant": "conventional-postgres",
+        "finalState": "resolved",
+        "effectStatus": "succeeded",
+        "deliveryCount": 1,
+        "reconciliationCount": 1,
+        "runtimeReloads": 2,
+        "auditAnswers": {
+          "initiating observation": true,
+          "competing hypotheses": true,
+          "confidence revisions": true,
+          "selected hypothesis and policy": true,
+          "decision and authorization": true,
+          "effect target and idempotency key": true,
+          "ambiguous delivery attempt": true,
+          "provider reconciliation": true,
+          "verification and terminal state": true
+        },
+        "durationMs": 50.150899999999865
+      },
+      "operatedTables": 8,
+      "databaseBytes": 540672
+    },
+    {
+      "outcome": {
+        "variant": "agentic-data-kernel",
+        "finalState": "resolved",
+        "effectStatus": "succeeded",
+        "deliveryCount": 1,
+        "reconciliationCount": 1,
+        "runtimeReloads": 2,
+        "auditAnswers": {
+          "initiating observation": true,
+          "competing hypotheses": true,
+          "confidence revisions": true,
+          "selected hypothesis and policy": true,
+          "decision and authorization": true,
+          "effect target and idempotency key": true,
+          "ambiguous delivery attempt": true,
+          "provider reconciliation": true,
+          "verification and terminal state": true
+        },
+        "durationMs": 899.7217
+      },
+      "operatedTables": 18,
+      "databaseBytes": 1572864
+    },
+    {
+      "outcome": {
+        "variant": "conventional-postgres",
+        "finalState": "resolved",
+        "effectStatus": "succeeded",
+        "deliveryCount": 1,
+        "reconciliationCount": 1,
+        "runtimeReloads": 2,
+        "auditAnswers": {
+          "initiating observation": true,
+          "competing hypotheses": true,
+          "confidence revisions": true,
+          "selected hypothesis and policy": true,
+          "decision and authorization": true,
+          "effect target and idempotency key": true,
+          "ambiguous delivery attempt": true,
+          "provider reconciliation": true,
+          "verification and terminal state": true
+        },
+        "durationMs": 61.64230000000043
+      },
+      "operatedTables": 8,
+      "databaseBytes": 540672
+    },
+    {
+      "outcome": {
+        "variant": "agentic-data-kernel",
+        "finalState": "resolved",
+        "effectStatus": "succeeded",
+        "deliveryCount": 1,
+        "reconciliationCount": 1,
+        "runtimeReloads": 2,
+        "auditAnswers": {
+          "initiating observation": true,
+          "competing hypotheses": true,
+          "confidence revisions": true,
+          "selected hypothesis and policy": true,
+          "decision and authorization": true,
+          "effect target and idempotency key": true,
+          "ambiguous delivery attempt": true,
+          "provider reconciliation": true,
+          "verification and terminal state": true
+        },
+        "durationMs": 766.9040999999997
+      },
+      "operatedTables": 18,
+      "databaseBytes": 1572864
+    }
+  ],
+  "correctness": {
+    "conventionalPostgres": {
+      "passed": 3,
+      "attempted": 3,
+      "deliveryCounts": [
+        1,
+        1,
+        1
+      ],
+      "reconciliationCounts": [
+        1,
+        1,
+        1
+      ],
+      "explanationScores": [
+        9,
+        9,
+        9
+      ]
+    },
+    "agenticDataKernel": {
+      "passed": 3,
+      "attempted": 3,
+      "deliveryCounts": [
+        1,
+        1,
+        1
+      ],
+      "reconciliationCounts": [
+        1,
+        1,
+        1
+      ],
+      "explanationScores": [
+        9,
+        9,
+        9
+      ]
+    }
+  },
+  "applicationSurface": {
+    "conventionalPostgres": {
+      "nonblankLines": 308,
+      "authoredTables": 8,
+      "operatedTables": 8
+    },
+    "agenticDataKernel": {
+      "nonblankLines": 40,
+      "authoredTables": 0,
+      "operatedTables": 18,
+      "scenarioSourceLines": 884,
+      "dependencySourceLines": 13247
+    }
+  },
+  "benchmarkHarness": {
+    "nonblankLines": 1168
+  },
+  "databaseBytes": {
+    "conventionalPostgresMedian": 540672,
+    "agenticDataKernelMedian": 1572864
+  },
+  "runtimeMillisecondsInformational": {
+    "conventionalPostgresMedian": 55.936999999999955,
+    "agenticDataKernelMedian": 829.8143
+  },
+  "explanationQuestions": 9,
+  "claims": {
+    "correctnessParityRequired": true,
+    "runtimeSuperiorityClaimed": false,
+    "processCrashRecoveryMeasured": false
+  }
+}
