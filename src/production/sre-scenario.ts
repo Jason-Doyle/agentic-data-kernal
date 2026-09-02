@@ -34,6 +34,14 @@ export interface SreScenarioOptions {
   config: ProductionConfig;
   migrationConfig: DatabaseConfig;
   runId?: string;
+  remediation?: SreRemediationTransport;
+}
+
+export interface SreRemediationTransport extends EffectTransport {
+  readonly deliveryCount: number;
+  readonly reconciliationCount: number;
+  readonly errorRate: number;
+  readonly providerReference: string;
 }
 
 export interface SreScenarioResult {
@@ -110,7 +118,8 @@ export async function runSreScenario(
     config.embeddingVersion,
     config.embeddingDimensions,
   );
-  const remediation = new SyntheticRemediationTransport();
+  const remediation =
+    options.remediation ?? new SyntheticRemediationTransport();
   const errorRateBefore = remediation.errorRate;
   let decisionAssertionId = "";
   let selectedHypothesisId = "";
@@ -430,7 +439,7 @@ export async function runSreScenario(
 async function continueAfterFirstRestart(input: {
   config: ProductionConfig;
   provider: EmbeddingProvider;
-  remediation: SyntheticRemediationTransport;
+  remediation: SreRemediationTransport;
   keyToken: string;
   purpose: string;
   runId: string;
@@ -816,7 +825,9 @@ class ScenarioEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
-class SyntheticRemediationTransport implements EffectTransport {
+export class SyntheticRemediationTransport
+  implements SreRemediationTransport
+{
   public deliveryCount = 0;
   public reconciliationCount = 0;
   public errorRate = 0.42;

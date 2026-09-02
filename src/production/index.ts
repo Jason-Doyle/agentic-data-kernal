@@ -57,8 +57,12 @@ export { ProductionKernel } from "./kernel.js";
 export { createProductionMcpServer } from "./mcp.js";
 export { startProductionHttpServer } from "./http.js";
 export { createProductionRuntime } from "./runtime.js";
-export { runSreScenario } from "./sre-scenario.js";
+export {
+  SyntheticRemediationTransport,
+  runSreScenario,
+} from "./sre-scenario.js";
 export type {
+  SreRemediationTransport,
   SreScenarioOptions,
   SreScenarioResult,
 } from "./sre-scenario.js";
