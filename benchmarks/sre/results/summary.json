@@ -4,8 +4,8 @@
   "environment": {
     "node": "v22.22.2",
     "postgres": "18.6 (Debian 18.6-1.pgdg12+2)",
-    "commit": "34e3048f473404cdbc0292d0075b7bae40738184",
-    "sourceHash": "170c987cc84217860ce29feabceacd863684ed5abd73397c700947635d23755a"
+    "commit": "b3a12a6a066c4de68adad8f376ff235af58b61c7",
+    "sourceHash": "db5052d97f02920144fbdc1a0871048bef4ad0ac6f742b8ff7013dc7af871545"
   },
   "runs": [
     {
@@ -31,7 +31,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 85.97399999999993
+        "durationMs": 63.28479999999996
       },
       "operatedTables": 8,
       "databaseBytes": 540672
@@ -59,7 +59,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 967.3033000000001
+        "durationMs": 891.0822000000001
       },
       "operatedTables": 18,
       "databaseBytes": 1572864
@@ -87,7 +87,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 61.03850000000011
+        "durationMs": 58.11660000000006
       },
       "operatedTables": 8,
       "databaseBytes": 540672
@@ -115,7 +115,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 864.3142000000003
+        "durationMs": 876.1727000000001
       },
       "operatedTables": 18,
       "databaseBytes": 1572864
@@ -143,7 +143,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 59.98480000000018
+        "durationMs": 53.971000000000004
       },
       "operatedTables": 8,
       "databaseBytes": 540672
@@ -171,7 +171,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 869.3758999999995
+        "durationMs": 830.5592000000001
       },
       "operatedTables": 18,
       "databaseBytes": 1572864
@@ -277,8 +277,8 @@
     "agenticDataKernelMedian": 1572864
   },
   "runtimeMillisecondsInformational": {
-    "conventionalPostgresMedian": 61.03850000000011,
-    "agenticDataKernelMedian": 869.3758999999995
+    "conventionalPostgresMedian": 58.11660000000006,
+    "agenticDataKernelMedian": 876.1727000000001
   },
   "explanationQuestions": 9,
   "claims": {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0-alpha.4
+
 - Added typed Knowledge and Agency operation layers to the embedded API and
   operation catalogs.
 - Moved retail Agent Intent dispatch behind a compatibility adapter without
