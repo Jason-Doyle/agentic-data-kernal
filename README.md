@@ -1,5 +1,12 @@
 # Agentic Data Kernel
 
+> **Author note, 2 September 2026, Jason Doyle**
+>
+> This project began as a feature forked from a private project and is now
+> maintained independently as open source. The documentation is heavily AI
+> assisted and may contain errors. Verify important behavior against the
+> implementation, tests, and current release before using it in production.
+
 [![CI](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/ci.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/codeql.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
