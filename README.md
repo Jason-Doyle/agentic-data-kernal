@@ -7,8 +7,8 @@
 > assisted and may contain errors. Verify important behavior against the
 > implementation, tests, and current release before using it in production.
 
-[![CI](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/ci.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/codeql.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernal/actions/workflows/codeql.yml)
+[![CI](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/ci.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/codeql.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Open source data infrastructure for long-running software agents.

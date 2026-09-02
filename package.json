@@ -16,12 +16,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Jason-Doyle/agentic-data-kernal.git"
+    "url": "git+https://github.com/Jason-Doyle/agentic-data-kernel.git"
   },
   "bugs": {
-    "url": "https://github.com/Jason-Doyle/agentic-data-kernal/issues"
+    "url": "https://github.com/Jason-Doyle/agentic-data-kernel/issues"
   },
-  "homepage": "https://github.com/Jason-Doyle/agentic-data-kernal#readme",
+  "homepage": "https://github.com/Jason-Doyle/agentic-data-kernel#readme",
   "publishConfig": {
     "access": "public",
     "provenance": true,

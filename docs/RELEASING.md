@@ -43,7 +43,7 @@ configured. Bootstrap the first release with a short-lived granular npm token:
 4. In the npm settings for `agentic-data-kernel`, configure a GitHub Actions
    trusted publisher with:
    - owner: `Jason-Doyle`;
-   - repository: `agentic-data-kernal`;
+   - repository: `agentic-data-kernel`;
    - workflow filename: `release.yml`;
    - environment: none.
 5. Delete the `NPM_TOKEN` repository secret.
@@ -108,7 +108,7 @@ For a prerelease:
 ```powershell
 npm view agentic-data-kernel@next version
 docker pull ghcr.io/jason-doyle/agentic-data-kernel:<version>
-gh release view v<version> --repo Jason-Doyle/agentic-data-kernal
+gh release view v<version> --repo Jason-Doyle/agentic-data-kernel
 ```
 
 Confirm the npm provenance statement, container attestation, release checksums,

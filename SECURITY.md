@@ -13,7 +13,7 @@ or container port.
 
 Use GitHub private vulnerability reporting for:
 
-<https://github.com/Jason-Doyle/agentic-data-kernal/security/advisories/new>
+<https://github.com/Jason-Doyle/agentic-data-kernel/security/advisories/new>
 
 Do not include credentials, customer data, or exploit details in a public
 issue.
