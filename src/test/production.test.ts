@@ -11,10 +11,12 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client as PgClient } from "pg";
 import { toSql as vectorToSql } from "pgvector";
 import type { AgentOperation } from "../ir.js";
+import { KernelError } from "../kernel.js";
 import type { JsonValue } from "../types.js";
 import {
   authenticateToken,
   createApiKey,
+  revokeApiKey,
   type AuthenticatedPrincipal,
 } from "../production/auth.js";
 import { reconcileArtifactFiles } from "../production/artifact-reconciliation.js";
@@ -60,6 +62,7 @@ test("packaged migrations resolve relative to the module", () => {
   const migrations = readdirSync(postgresMigrationDirectory);
   assert.ok(migrations.includes("001_core.sql"));
   assert.ok(migrations.includes("002_embedding_space.sql"));
+  assert.ok(migrations.includes("003_generic_agency.sql"));
   const embeddingMigration = readFileSync(
     join(postgresMigrationDirectory, "002_embedding_space.sql"),
     "utf8",
@@ -623,6 +626,523 @@ test(
       });
       assert.equal(search[0]?.assertion.assertionId, "assertion:weight");
 
+      await execute(kernel, principalA, "generic-decision", {
+        op: "assert",
+        assertion: {
+          assertionId: "assertion:generic-decision",
+          subjectEntityId: "product:1",
+          predicate: "rollback_deployment",
+          object: { type: "string", value: "api-v42" },
+          kind: "decision",
+        },
+      });
+      await execute(kernel, principalA, "generic-policy", {
+        op: "assert",
+        assertion: {
+          assertionId: "assertion:generic-policy",
+          subjectEntityId: "product:1",
+          predicate: "incident_remediation_policy",
+          object: { type: "string", value: "incident-remediation-v2" },
+          kind: "directive",
+        },
+      });
+      await execute(kernel, principalA, "generic-support", {
+        op: "add_lineage",
+        relation: "supports",
+        from: {
+          type: "assertion",
+          assertionId: "assertion:weight",
+        },
+        to: {
+          type: "assertion",
+          assertionId: "assertion:generic-decision",
+        },
+      });
+      await assert.rejects(
+        () =>
+          execute(kernel, principalA, "reserved-order-workflow", {
+            op: "create_workflow",
+            instanceId: "order:blocked",
+            workflowType: "incident_response",
+            initialState: "open",
+            data: {},
+          }),
+        /order: identifier namespace is reserved/,
+      );
+      const competingCreates = await Promise.allSettled([
+        execute(kernel, principalA, "generic-create-a", {
+          op: "create_workflow",
+          instanceId: "incident:concurrent",
+          workflowType: "incident_response",
+          initialState: "open",
+          data: { source: "a" },
+        }),
+        execute(kernel, principalA, "generic-create-b", {
+          op: "create_workflow",
+          instanceId: "incident:concurrent",
+          workflowType: "incident_response",
+          initialState: "open",
+          data: { source: "b" },
+        }),
+      ]);
+      assert.equal(
+        competingCreates.filter((result) => result.status === "fulfilled")
+          .length,
+        1,
+      );
+      const rejectedCreate = competingCreates.find(
+        (result) => result.status === "rejected",
+      );
+      assert.ok(rejectedCreate?.status === "rejected");
+      assert.ok(rejectedCreate.reason instanceof KernelError);
+      assert.equal(rejectedCreate.reason.code, "conflict");
+      await execute(kernel, principalA, "json-workflow", {
+        op: "create_workflow",
+        instanceId: "incident:json",
+        workflowType: "incident_response",
+        initialState: "open",
+        data: ["alert", 1],
+      });
+      await execute(kernel, principalA, "json-workflow-advance", {
+        op: "advance_workflow",
+        instanceId: "incident:json",
+        expectedRevision: 1,
+        expectedState: "open",
+        transitionName: "set_scalar_data",
+        toState: "waiting",
+        data: "pending",
+      });
+      const jsonWorkflow = await kernel.getMachineReadOnly(
+        principalA,
+        "incident:json",
+      );
+      assert.equal(jsonWorkflow.data, "pending");
+      const workflow = await execute(kernel, principalA, "generic-workflow", {
+        op: "create_workflow",
+        instanceId: "incident:generic",
+        workflowType: "incident_response",
+        initialState: "investigating",
+        data: { severity: 2 },
+      });
+      assert.equal(jsonField(workflow.result, "revision"), 1);
+      await execute(kernel, principalA, "generic-advance", {
+        op: "advance_workflow",
+        instanceId: "incident:generic",
+        expectedRevision: 1,
+        expectedState: "investigating",
+        transitionName: "authorize_rollback",
+        toState: "remediation_pending",
+        data: { severity: 2, deployment: "api-v42" },
+      });
+      await assert.rejects(
+        () =>
+          execute(kernel, principalA, "generic-missing-status", {
+            op: "request_effect",
+            instanceId: "incident:generic",
+            expectedRevision: 2,
+            effectName: "rollback_without_status",
+            effectType: "deployment.rollback",
+            target: "https://payments.example.com/rollback",
+            request: { deployment: "api-v42" },
+            idempotencyKey: "rollback-without-status",
+            decisionAssertionId: "assertion:generic-decision",
+            policyAssertionId: "assertion:generic-policy",
+          }),
+        /statusUrl is required/,
+      );
+      await assert.rejects(
+          () =>
+            execute(kernel, principalA, "generic-invalid-policy", {
+              op: "request_effect",
+              instanceId: "incident:generic",
+              expectedRevision: 2,
+              effectName: "rollback_invalid_policy",
+              effectType: "deployment.rollback",
+              target: "https://payments.example.com/rollback",
+              statusUrl: "https://payments.example.com/status/invalid_policy",
+              request: { deployment: "api-v42" },
+              idempotencyKey: "rollback-invalid-policy",
+              decisionAssertionId: "assertion:generic-decision",
+              policyAssertionId: "assertion:generic-decision",
+            }),
+          /directive assertion/,
+      );
+      const genericEffectResult = await execute(
+        kernel,
+        principalA,
+        "generic-effect",
+        {
+          op: "request_effect",
+          instanceId: "incident:generic",
+          expectedRevision: 2,
+          effectName: "rollback_api",
+          effectType: "deployment.rollback",
+          target: "https://payments.example.com/rollback",
+          statusUrl: "https://payments.example.com/status/rollback_api",
+          request: { deployment: "api-v42" },
+          idempotencyKey: "rollback-api-v42",
+          decisionAssertionId: "assertion:generic-decision",
+          policyAssertionId: "assertion:generic-policy",
+          budgetAmount: "25",
+          currency: "USD",
+        },
+      );
+      const genericEffectId = field(
+        genericEffectResult.result,
+        "effectId",
+      );
+      assert.equal(
+        field(genericEffectResult.result, "outcomeHandler"),
+        "none",
+      );
+      const genericEffectReplay = await execute(
+        kernel,
+        principalA,
+        "generic-effect-retry",
+        {
+          op: "request_effect",
+          instanceId: "incident:generic",
+          expectedRevision: 2,
+          effectName: "rollback_api",
+          effectType: "deployment.rollback",
+          target: "https://payments.example.com/rollback",
+          statusUrl: "https://payments.example.com/status/rollback_api",
+          request: { deployment: "api-v42" },
+          idempotencyKey: "rollback-api-v42",
+          decisionAssertionId: "assertion:generic-decision",
+          policyAssertionId: "assertion:generic-policy",
+          budgetAmount: "25",
+          currency: "USD",
+        },
+      );
+      assert.equal(
+        field(genericEffectReplay.result, "effectId"),
+        genericEffectId,
+      );
+      await assert.rejects(
+        () =>
+          execute(kernel, principalA, "generic-effect-conflict", {
+            op: "request_effect",
+            instanceId: "incident:generic",
+            expectedRevision: 2,
+            effectName: "rollback_api_changed",
+            effectType: "deployment.rollback",
+            target: "https://payments.example.com/other-path",
+            statusUrl: "https://payments.example.com/status/rollback_changed",
+            request: { deployment: "api-v99" },
+            idempotencyKey: "rollback-api-v42",
+            decisionAssertionId: "assertion:generic-decision",
+            policyAssertionId: "assertion:generic-policy",
+            budgetAmount: "25",
+            currency: "USD",
+          }),
+        /Provider idempotency key .* different effect request/,
+      );
+      await assert.rejects(
+        () =>
+          execute(kernel, principalA, "forged-generic-outcome", {
+            op: "record_effect_outcome",
+            effectId: genericEffectId,
+            idempotencyKey: "forged-generic-outcome",
+            status: "succeeded",
+          }),
+        /accepted only from the effect worker/,
+      );
+      const reservedBudget = await database.query<{
+        reserved: string;
+        spent: string;
+      }>(
+        `SELECT
+           effect_budget_reserved::TEXT AS reserved,
+           effect_budget_spent::TEXT AS spent
+         FROM agentic_auth.api_keys
+         WHERE key_id = $1`,
+        [principalA.keyId],
+      );
+      assert.deepEqual(reservedBudget.rows[0], {
+        reserved: "25.0000",
+        spent: "0.0000",
+      });
+      let genericDeliveries = 0;
+      const genericWorker = new EffectWorker(
+        database,
+        {
+          deliver: async () => {
+            genericDeliveries += 1;
+            return {
+              status: "succeeded",
+              responseStatus: 200,
+              outcome: { providerReference: "rollback-42" },
+            };
+          },
+          reconcile: async () => ({
+            status: "unknown",
+            responseStatus: 200,
+            outcome: { status: "pending" },
+          }),
+        },
+        { effectLeaseSeconds: 30, effectMaxAttempts: 3 },
+        metrics,
+        logger,
+      );
+      assert.equal(await genericWorker.runOnce(), true);
+      assert.equal(genericDeliveries, 1);
+      const genericEffects = await execute(
+        kernel,
+        principalA,
+        "generic-effects",
+        {
+          op: "list_effects",
+          instanceId: "incident:generic",
+        },
+      );
+      const genericEffect = arrayItem(genericEffects.result, 0);
+      assert.equal(field(genericEffect, "status"), "succeeded");
+      const genericMachine = await kernel.getMachineReadOnly(
+        principalA,
+        "incident:generic",
+      );
+      assert.equal(genericMachine.state, "remediation_pending");
+      assert.equal(genericMachine.revision, 2);
+      const settledBudget = await database.query<{
+        reserved: string;
+        spent: string;
+      }>(
+        `SELECT
+           effect_budget_reserved::TEXT AS reserved,
+           effect_budget_spent::TEXT AS spent
+         FROM agentic_auth.api_keys
+         WHERE key_id = $1`,
+        [principalA.keyId],
+      );
+      assert.deepEqual(settledBudget.rows[0], {
+        reserved: "0.0000",
+        spent: "25.0000",
+      });
+      const lineage = await database.withTenantTransaction(
+        principalA,
+        (client) =>
+          client.query<{ relation: string }>(
+            `SELECT relation
+             FROM agentic.lineage_edges
+             WHERE to_effect_id = $1
+             ORDER BY relation`,
+            [genericEffectId],
+          ),
+      );
+      assert.deepEqual(
+        lineage.rows.map((edge) => edge.relation),
+        ["authorizes", "governs", "produces"],
+      );
+      const hiddenLineage = await database.withTenantTransaction(
+        principalB,
+        (client) =>
+          client.query(
+            `SELECT 1
+             FROM agentic.lineage_edges
+             WHERE to_effect_id = $1`,
+            [genericEffectId],
+          ),
+      );
+      assert.equal(hiddenLineage.rowCount, 0);
+      await assert.rejects(
+        () =>
+          execute(kernel, principalB, "cross-tenant-lineage", {
+            op: "add_lineage",
+            relation: "authorizes",
+            from: {
+              type: "assertion",
+              assertionId: "assertion:generic-decision",
+            },
+            to: { type: "effect", effectId: genericEffectId },
+          }),
+        /endpoint was not found/,
+      );
+      const reconcilingEffectResult = await execute(
+          kernel,
+          principalA,
+          "generic-reconciling-effect",
+          {
+            op: "request_effect",
+            instanceId: "incident:generic",
+            expectedRevision: 2,
+            effectName: "rollback_api_reconcile",
+            effectType: "deployment.rollback",
+            target: "https://payments.example.com/rollback",
+            statusUrl: "https://payments.example.com/status/rollback_reconcile",
+            request: { deployment: "api-v43" },
+            idempotencyKey: "rollback-api-v43",
+            decisionAssertionId: "assertion:generic-decision",
+            policyAssertionId: "assertion:generic-policy",
+            budgetAmount: "10",
+            currency: "USD",
+          },
+      );
+      const reconcilingEffectId = field(
+          reconcilingEffectResult.result,
+          "effectId",
+      );
+      let genericDeliveryCalls = 0;
+      let genericReconciliationCalls = 0;
+      const reconcilingGenericWorker = new EffectWorker(
+          database,
+          {
+            deliver: async () => {
+              genericDeliveryCalls += 1;
+              return {
+                status: "unknown",
+                responseStatus: null,
+                outcome: ["timeout", 1],
+              };
+            },
+            reconcile: async () => {
+              genericReconciliationCalls += 1;
+              return {
+                status: "succeeded",
+                responseStatus: 200,
+                outcome: "completed",
+              };
+            },
+          },
+          { effectLeaseSeconds: 30, effectMaxAttempts: 1 },
+          metrics,
+          logger,
+      );
+      assert.equal(await reconcilingGenericWorker.runOnce(), true);
+      await database.withTenantTransaction(principalA, (client) =>
+          client.query(
+            `UPDATE agentic.effect_intents
+             SET next_attempt_at = clock_timestamp()
+             WHERE effect_id = $1`,
+            [reconcilingEffectId],
+          ),
+      );
+      assert.equal(await reconcilingGenericWorker.runOnce(), true);
+      assert.equal(genericDeliveryCalls, 1);
+      assert.equal(genericReconciliationCalls, 1);
+      const reconciledGenericEffects = await execute(
+          kernel,
+          principalA,
+          "generic-reconciled-effects",
+          {
+            op: "list_effects",
+            instanceId: "incident:generic",
+          },
+      );
+      const reconciledEffect = findArrayItemByField(
+          reconciledGenericEffects.result,
+          "effectId",
+          reconcilingEffectId,
+      );
+      assert.equal(field(reconciledEffect, "status"), "succeeded");
+      const reconciledBudget = await database.query<{
+          reserved: string;
+          spent: string;
+      }>(
+          `SELECT
+             effect_budget_reserved::TEXT AS reserved,
+             effect_budget_spent::TEXT AS spent
+           FROM agentic_auth.api_keys
+           WHERE key_id = $1`,
+          [principalA.keyId],
+      );
+      assert.deepEqual(reconciledBudget.rows[0], {
+          reserved: "0.0000",
+          spent: "35.0000",
+      });
+      const revocableKey = await createApiKey(database, config, {
+          tenantId: tenantA,
+          tenantName: "Tenant A",
+          principalId: "revocable-agent",
+          scopes: ["data:read", "effects:write"],
+          purposes: ["test"],
+          effectBudgetCurrency: "USD",
+          effectBudgetLimit: "10",
+      });
+      const revocablePrincipal = await authenticateToken(
+          database,
+          config,
+          revocableKey.token,
+          "test",
+      );
+      const cancellableEffectResult = await execute(
+          kernel,
+          revocablePrincipal,
+          "generic-cancellable-effect",
+          {
+            op: "request_effect",
+            instanceId: "incident:generic",
+            expectedRevision: 2,
+            effectName: "rollback_api_cancelled",
+            effectType: "deployment.rollback",
+            target: "https://payments.example.com/rollback",
+            statusUrl: "https://payments.example.com/status/rollback_cancelled",
+            request: { deployment: "api-v44" },
+            idempotencyKey: "rollback-api-v44",
+            decisionAssertionId: "assertion:generic-decision",
+            policyAssertionId: "assertion:generic-policy",
+            budgetAmount: "5",
+            currency: "USD",
+          },
+      );
+      const cancellableEffectId = field(
+          cancellableEffectResult.result,
+          "effectId",
+      );
+      await database.withSystemWriteTransaction((client) =>
+        revokeApiKey(client, revocableKey.keyId),
+      );
+      let cancelledDeliveryCalls = 0;
+      const cancellationWorker = new EffectWorker(
+          database,
+          {
+            deliver: async () => {
+              cancelledDeliveryCalls += 1;
+              return {
+                status: "succeeded",
+                responseStatus: 200,
+                outcome: { providerReference: "unexpected" },
+              };
+            },
+            reconcile: async () => ({
+              status: "unknown",
+              responseStatus: 200,
+              outcome: { status: "pending" },
+            }),
+          },
+          { effectLeaseSeconds: 30, effectMaxAttempts: 3 },
+          metrics,
+          logger,
+      );
+      assert.equal(await cancellationWorker.runOnce(), false);
+      assert.equal(cancelledDeliveryCalls, 0);
+      const cancelledEffect = await database.withTenantTransaction(
+          principalA,
+          async (client) =>
+            client.query<{ status: string }>(
+              `SELECT status
+               FROM agentic.effect_intents
+               WHERE effect_id = $1`,
+              [cancellableEffectId],
+            ),
+      );
+      assert.equal(cancelledEffect.rows[0]?.status, "cancelled");
+      const cancelledBudget = await database.query<{
+          reserved: string;
+          spent: string;
+      }>(
+          `SELECT
+             effect_budget_reserved::TEXT AS reserved,
+             effect_budget_spent::TEXT AS spent
+           FROM agentic_auth.api_keys
+           WHERE key_id = $1`,
+          [revocableKey.keyId],
+      );
+      assert.deepEqual(cancelledBudget.rows[0], {
+          reserved: "0.0000",
+          spent: "0.0000",
+      });
+
       await execute(kernel, principalA, "seed", {
         op: "seed_inventory",
         sku: "sku-1",
@@ -638,6 +1158,20 @@ test(
         holdSeconds: 600,
         idempotencyKey: "reserve-order-1",
       });
+      await assert.rejects(
+        () =>
+          execute(kernel, principalA, "forge-retail-transition", {
+            op: "advance_workflow",
+            instanceId: "order:order-1",
+            expectedRevision: 1,
+            expectedState: "reserved",
+            transitionName: "forge_confirmation",
+            toState: "confirmed",
+            data: {},
+            terminal: true,
+          }),
+        /cannot modify retail orders/,
+      );
       const payment = await execute(kernel, principalA, "payment", {
         op: "request_payment",
         instanceId: "order:order-1",
@@ -713,7 +1247,7 @@ test(
         [principalA.keyId],
       );
       assert.equal(Number(budget.rows[0]?.effect_budget_reserved), 0);
-      assert.equal(Number(budget.rows[0]?.effect_budget_spent), 20);
+      assert.equal(Number(budget.rows[0]?.effect_budget_spent), 55);
 
       await execute(kernel, principalA, "seed-reconcile", {
         op: "seed_inventory",
@@ -1541,6 +2075,46 @@ function field(value: JsonValue, name: string): string {
   return value[name];
 }
 
+function jsonField(value: JsonValue, name: string): JsonValue {
+  if (
+    value === null ||
+    Array.isArray(value) ||
+    typeof value !== "object" ||
+    !(name in value)
+  ) {
+    throw new Error(`Expected ${name}`);
+  }
+  return value[name] ?? null;
+}
+
+function arrayItem(value: JsonValue, index: number): JsonValue {
+  if (!Array.isArray(value) || value[index] === undefined) {
+    throw new Error(`Expected array item ${index}`);
+  }
+  return value[index];
+}
+
+function findArrayItemByField(
+  value: JsonValue,
+  fieldName: string,
+  expected: JsonValue,
+): JsonValue {
+  if (!Array.isArray(value)) {
+    throw new Error("Expected an array");
+  }
+  const match = value.find(
+    (candidate) =>
+      candidate !== null &&
+      !Array.isArray(candidate) &&
+      typeof candidate === "object" &&
+      candidate[fieldName] === expected,
+  );
+  if (match === undefined) {
+    throw new Error(`Expected array item with ${fieldName}`);
+  }
+  return match;
+}
+
 function listFiles(directory: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(directory, {
@@ -1642,6 +2216,7 @@ async function cleanupTenant(
 ): Promise<void> {
   await database.withTenantTransaction(principal, async (client) => {
     for (const table of [
+      "lineage_edges",
       "effect_attempts",
       "effect_intents",
       "timers",

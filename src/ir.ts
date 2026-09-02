@@ -69,6 +69,38 @@ const strengthSchema = z.discriminatedUnion("type", [
     .strict(),
 ]);
 
+const lineageEndpointSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("artifact"),
+      artifactId: nonEmptyString,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("assertion"),
+      assertionId: nonEmptyString,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("workflow_revision"),
+      instanceId: nonEmptyString,
+      revision: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("effect"),
+      effectId: nonEmptyString,
+    })
+    .strict(),
+]);
+
+const nonNegativeDecimalSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,15})(\.\d{1,4})?$/);
+
 const epistemicKindSchema = z.enum([
   "observation",
   "reported_fact",
@@ -154,6 +186,79 @@ export const agentOperationSchema = z.discriminatedUnion("op", [
       validAt: isoTimestamp.optional(),
       systemAt: isoTimestamp.optional(),
       limit: z.number().int().min(1).max(100).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("create_workflow"),
+      instanceId: nonEmptyString,
+      workflowType: nonEmptyString,
+      initialState: nonEmptyString,
+      data: z.json(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("advance_workflow"),
+      instanceId: nonEmptyString,
+      expectedRevision: z.number().int().positive(),
+      expectedState: nonEmptyString,
+      transitionName: nonEmptyString,
+      toState: nonEmptyString,
+      data: z.json(),
+      terminal: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("request_effect"),
+      instanceId: nonEmptyString,
+      expectedRevision: z.number().int().positive(),
+      effectName: nonEmptyString,
+      effectType: nonEmptyString,
+      target: nonEmptyString,
+      statusUrl: nonEmptyString.optional(),
+      request: z.json(),
+      idempotencyKey: nonEmptyString,
+      decisionAssertionId: nonEmptyString,
+      policyAssertionId: nonEmptyString,
+      budgetAmount: nonNegativeDecimalSchema.optional(),
+      currency: z.string().trim().regex(/^[A-Z]{3}$/).optional(),
+    })
+    .strict()
+    .refine(
+      (value) =>
+        value.budgetAmount === undefined ||
+        Number(value.budgetAmount) === 0 ||
+        value.currency !== undefined,
+      {
+        message: "currency is required when budgetAmount is greater than zero",
+        path: ["currency"],
+      },
+    ),
+  z
+    .object({
+      op: z.literal("add_lineage"),
+      relation: z.enum([
+        "evidence_for",
+        "supports",
+        "contradicts",
+        "governs",
+        "authorizes",
+        "produces",
+        "verifies",
+      ]),
+      from: lineageEndpointSchema,
+      to: lineageEndpointSchema,
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("record_effect_outcome"),
+      effectId: nonEmptyString,
+      idempotencyKey: nonEmptyString,
+      status: z.enum(["succeeded", "failed", "unknown"]),
+      outcome: z.json().optional(),
     })
     .strict(),
   z
@@ -342,6 +447,16 @@ function executeOperation(
         systemAt: operation.systemAt,
         limit: operation.limit,
       });
+    case "create_workflow":
+      return kernel.createWorkflow(principal, operation);
+    case "advance_workflow":
+      return kernel.advanceWorkflow(principal, operation);
+    case "request_effect":
+      return kernel.requestEffect(principal, operation);
+    case "add_lineage":
+      return kernel.addLineage(principal, operation);
+    case "record_effect_outcome":
+      return kernel.recordEffectOutcome(principal, operation);
     case "seed_inventory":
       return kernel.seedInventory(
         principal,
@@ -356,10 +471,19 @@ function executeOperation(
     case "record_payment_outcome":
       return kernel.recordPaymentOutcome(principal, operation);
     case "get_machine":
-      return kernel.getMachine(principal.tenantId, operation.instanceId);
+      return kernel.getMachineRecord(
+        principal.tenantId,
+        operation.instanceId,
+      );
     case "list_effects":
       return kernel.listEffects(principal.tenantId, operation.instanceId);
     case "process_timers":
       return kernel.processDueTimers(principal, operation.asOf);
+    default:
+      return assertNever(operation);
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unsupported operation ${JSON.stringify(value)}`);
 }

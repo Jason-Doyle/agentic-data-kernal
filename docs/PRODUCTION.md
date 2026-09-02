@@ -287,6 +287,28 @@ success.
 
 Public clients cannot submit payment outcomes.
 
+### Generic effects
+
+`request_effect` attaches an effect to an exact non-retail workflow revision
+and requires active decision and directive assertions. These bindings are
+stored with composite tenant FKs and causal lineage edges. They document why an
+effect was requested; API-key scope, purpose, host allowlists, and budget
+checks remain the authorization boundary.
+
+Generic effects use the same leases, authorization fences, retry policy, and
+status reconciliation as payments. On a terminal result, the worker settles
+the reserved budget but does not mutate inventory or workflow state. The agent
+must inspect the durable effect and explicitly advance its workflow.
+
+Migration 003 adds generic workflow metadata, authority bindings, and the
+tenant-isolated lineage table. Existing retail effects retain the
+`retail_order_payment` outcome handler.
+
+Before adding provider-level idempotency enforcement, migration 003 checks
+historical effects for duplicate keys within the same tenant and provider
+origin. Resolve any reported collision before retrying the migration; the
+migration rolls back without changing the schema.
+
 ## Backup and restore
 
 Create a checksum-manifested backup:

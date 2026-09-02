@@ -168,7 +168,7 @@ export async function assertMigrationsApplied(
     `SELECT EXISTS (
        SELECT 1
        FROM agentic.schema_migrations
-       WHERE version = '002'
+       WHERE version = '003'
      ) AS applied`,
   );
   if (result.rows[0]?.applied !== true) {

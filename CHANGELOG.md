@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added generic durable workflows with optimistic revision and state guards.
+- Added FK-backed causal lineage across artifacts, assertions, workflow
+  revisions, and effects.
+- Added decision- and policy-bound generic effects that reuse authorization,
+  budgets, leases, retries, and reconciliation without invoking retail
+  finalization.
+
 ## 0.2.0-alpha.2
 
 - Made the PostgreSQL embedding model, version, and indexed dimensions
