@@ -9,7 +9,7 @@
 
 [![CI](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/ci.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/codeql.yml/badge.svg)](https://github.com/Jason-Doyle/agentic-data-kernel/actions/workflows/codeql.yml)
-[![npm next](https://img.shields.io/npm/v/agentic-data-kernel/next?label=npm%20next)](https://www.npmjs.com/package/agentic-data-kernel)
+[![npm](https://img.shields.io/npm/v/agentic-data-kernel?label=npm)](https://www.npmjs.com/package/agentic-data-kernel)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 An agent-first persistence layer for durable knowledge, workflows, and
@@ -264,12 +264,11 @@ matter more than durable agency semantics.
 
 ## Install and run
 
-The current release is `0.3.0-alpha.5`. Prereleases use the npm `next` tag.
-Pin an exact version for production evaluation.
+The current stable release is `1.0.0`. Pin an exact version in production.
 
 ```powershell
-npm install agentic-data-kernel@next
-npx --yes agentic-data-kernel@next example --db .data\example.db
+npm install agentic-data-kernel@1.0.0
+npx --yes agentic-data-kernel@1.0.0 example --db .data\example.db
 ```
 
 Package entry points and commands:
@@ -312,7 +311,7 @@ Replace every placeholder in `.env` with the generated values, database
 passwords, and embedding-provider configuration before continuing:
 
 ```powershell
-$env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:0.3.0-alpha.5"
+$env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:1.0.0"
 docker compose --profile server pull
 docker compose --profile server up --no-build
 ```

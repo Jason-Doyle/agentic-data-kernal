@@ -86,7 +86,7 @@ An MCP client can launch the published embedded server directly:
       "command": "npx",
       "args": [
         "--yes",
-        "agentic-data-kernel@next",
+        "agentic-data-kernel@1.0.0",
         "mcp",
         "--db",
         ".data/agentic.db"
