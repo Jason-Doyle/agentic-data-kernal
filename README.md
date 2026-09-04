@@ -264,7 +264,7 @@ matter more than durable agency semantics.
 
 ## Install and run
 
-The current release is `0.3.0-alpha.4`. Prereleases use the npm `next` tag.
+The current release is `0.3.0-alpha.5`. Prereleases use the npm `next` tag.
 Pin an exact version for production evaluation.
 
 ```powershell
@@ -312,7 +312,7 @@ Replace every placeholder in `.env` with the generated values, database
 passwords, and embedding-provider configuration before continuing:
 
 ```powershell
-$env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:0.3.0-alpha.4"
+$env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:0.3.0-alpha.5"
 docker compose --profile server pull
 docker compose --profile server up --no-build
 ```
