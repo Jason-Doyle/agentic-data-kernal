@@ -11,4 +11,3 @@ if (match?.[1] !== packageManifest.version) {
   );
 }
 console.log(`Validated source version ${packageManifest.version}`);
-

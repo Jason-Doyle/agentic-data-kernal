@@ -8,4 +8,3 @@ export const SUPPORTED_AGENT_INTENT_VERSIONS = [
 
 export type AgentIntentVersion =
   (typeof SUPPORTED_AGENT_INTENT_VERSIONS)[number];
-
