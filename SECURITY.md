@@ -1,5 +1,12 @@
 # Security
 
+## Supported versions
+
+| Version | Security support |
+| --- | --- |
+| 1.x | Supported |
+| 0.x | Unsupported after 1.0.0 |
+
 ## Supported profiles
 
 The PostgreSQL production profile is the only profile intended for deployment
@@ -21,10 +28,14 @@ issue.
 ## Production security requirements
 
 - Run the application with the non-superuser `agentic_app` database role.
+- Run `bootstrap-role` before migrations and require runtime role verification
+  at startup.
 - Reserve the PostgreSQL superuser connection for migrations, backup, and
   restore.
 - Terminate TLS at a trusted reverse proxy or service mesh. The included
   Compose profile uses Caddy and does not publish the Node.js listener.
+- Set `TRUSTED_PROXY_HOPS` to the exact trusted forwarding chain and prevent
+  direct access around it.
 - Store API keys, the authentication pepper, artifact keys, database
   passwords, and embedding-provider credentials in a secret manager.
 - Keep embedding model, version, and dimensions aligned with the database
@@ -39,6 +50,10 @@ issue.
 - Restrict `/metrics` and health endpoints at the network layer when operational
   metadata is considered sensitive.
 - Back up the PostgreSQL database and encrypted artifact directory together.
+- Sign backup manifests with `BACKUP_MANIFEST_KEY` stored outside the backup
+  location.
+- Reject backups whose signed migration versions and checksums do not exactly
+  match the restoring runtime.
 - Test restore procedures before relying on a backup.
 
 ## Security properties

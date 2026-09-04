@@ -5,7 +5,10 @@ import {
   createApiKey,
   revokeApiKey,
 } from "./auth.js";
-import { bootstrapRuntimeRole } from "./bootstrap.js";
+import {
+  assertRuntimeRoleSafe,
+  bootstrapRuntimeRole,
+} from "./bootstrap.js";
 import {
   formatTraceExplanation,
   normalizeTraceDepth,
@@ -34,6 +37,7 @@ import {
 } from "./migrations.js";
 import { startProductionMcpServer } from "./mcp.js";
 import { createProductionRuntime } from "./runtime.js";
+import { startWorkerMonitor } from "./worker-monitor.js";
 
 async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
@@ -116,47 +120,69 @@ async function main(): Promise<void> {
     case "serve": {
       const config = loadProductionConfig();
       const runtime = createProductionRuntime(config);
-      await assertRuntimeReady(runtime.database, config);
-      const server = await startProductionHttpServer({
-        config,
-        database: runtime.database,
-        kernel: runtime.kernel,
-        metrics: runtime.metrics,
-        logger: runtime.logger,
-      });
-      runtime.logger.info(
-        { host: config.host, port: config.port },
-        "Production server started",
-      );
-      await waitForServerShutdown(server, runtime.database);
+      let server: import("node:http").Server | null = null;
+      try {
+        await assertRuntimeReady(runtime.database, config);
+        server = await startProductionHttpServer({
+          config,
+          database: runtime.database,
+          kernel: runtime.kernel,
+          metrics: runtime.metrics,
+          logger: runtime.logger,
+        });
+        runtime.logger.info(
+          { host: config.host, port: config.port },
+          "Production server started",
+        );
+        await waitForServerShutdown(
+          server,
+          config.shutdownTimeoutMs,
+        );
+      } finally {
+        if (server?.listening) {
+          await closeServer(server, config.shutdownTimeoutMs);
+        }
+        await runtime.database.close();
+      }
       return;
     }
     case "worker": {
       const config = loadProductionConfig();
       const runtime = createProductionRuntime(config);
-      await assertRuntimeReady(runtime.database, config);
-      const worker = new EffectWorker(
-        runtime.database,
-        new SecureHttpEffectTransport(
-          config.effectAllowedHosts,
-          config.effectTimeoutMs,
-        ),
-        config,
-        runtime.metrics,
-        runtime.logger,
-      );
-      if (args.includes("--once")) {
-        const worked = await worker.runOnce();
-        print({ worked });
+      let monitor: import("node:http").Server | null = null;
+      try {
+        await assertRuntimeReady(runtime.database, config);
+        const worker = new EffectWorker(
+          runtime.database,
+          new SecureHttpEffectTransport(
+            config.effectAllowedHosts,
+            config.effectTimeoutMs,
+          ),
+          config,
+          runtime.metrics,
+          runtime.logger,
+        );
+        monitor = await startWorkerMonitor(
+          config,
+          runtime.database,
+          runtime.metrics,
+        );
+        if (args.includes("--once")) {
+          const worked = await worker.runOnce();
+          print({ worked });
+          return;
+        }
+        const controller = new AbortController();
+        process.once("SIGINT", () => controller.abort());
+        process.once("SIGTERM", () => controller.abort());
+        runtime.logger.info("Effect worker started");
+        await worker.run(controller.signal);
+      } finally {
+        if (monitor?.listening) {
+          await closeServer(monitor, config.shutdownTimeoutMs);
+        }
         await runtime.database.close();
-        return;
       }
-      const controller = new AbortController();
-      process.once("SIGINT", () => controller.abort());
-      process.once("SIGTERM", () => controller.abort());
-      runtime.logger.info("Effect worker started");
-      await worker.run(controller.signal);
-      await runtime.database.close();
       return;
     }
     case "reconcile-artifacts": {
@@ -184,25 +210,34 @@ async function main(): Promise<void> {
     case "mcp": {
       const config = loadProductionConfig();
       const runtime = createProductionRuntime(config);
-      await assertRuntimeReady(runtime.database, config);
-      const token = requiredEnvironment("AGENTIC_DATA_API_KEY", 1);
-      const purpose = requiredEnvironment("AGENTIC_DATA_PURPOSE", 1);
-      const principal = await authenticateToken(
-        runtime.database,
-        config,
-        token,
-        purpose,
-      );
-      const server = await startProductionMcpServer(
-        runtime.kernel,
-        principal,
-      );
-      const close = async (): Promise<void> => {
-        await server.close();
+      let server: Awaited<
+        ReturnType<typeof startProductionMcpServer>
+      > | null = null;
+      try {
+        await assertRuntimeReady(runtime.database, config);
+        const token = requiredEnvironment("AGENTIC_DATA_API_KEY", 1);
+        const purpose = requiredEnvironment("AGENTIC_DATA_PURPOSE", 1);
+        const principal = await authenticateToken(
+          runtime.database,
+          config,
+          token,
+          purpose,
+        );
+        server = await startProductionMcpServer(
+          runtime.kernel,
+          principal,
+        );
+        await waitForMcpShutdown(
+          server,
+          config.shutdownTimeoutMs,
+        );
+        server = null;
+      } finally {
+        if (server) {
+          await server.close();
+        }
         await runtime.database.close();
-      };
-      process.once("SIGINT", () => void close());
-      process.once("SIGTERM", () => void close());
+      }
       return;
     }
     case "explain": {
@@ -269,6 +304,7 @@ async function assertRuntimeReady(
   database: ProductionDatabase,
   config: ReturnType<typeof loadProductionConfig>,
 ): Promise<void> {
+  await assertRuntimeRoleSafe(database);
   await assertMigrationsApplied(database);
   await assertEmbeddingSpaceConfigured(
     database,
@@ -278,16 +314,90 @@ async function assertRuntimeReady(
 
 async function waitForServerShutdown(
   server: import("node:http").Server,
-  database: ProductionDatabase,
+  timeoutMs: number,
+): Promise<void> {
+  await waitForShutdownSignal();
+  await closeServer(server, timeoutMs);
+}
+
+async function waitForShutdownSignal(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const finish = (): void => {
+      process.off("SIGINT", finish);
+      process.off("SIGTERM", finish);
+      resolve();
+    };
+    process.once("SIGINT", finish);
+    process.once("SIGTERM", finish);
+  });
+}
+
+async function closeServer(
+  server: import("node:http").Server,
+  timeoutMs: number,
 ): Promise<void> {
   await new Promise<void>((resolve) => {
+    let closing = false;
+    let finished = false;
+    let timeout: NodeJS.Timeout | null = null;
+    const finish = (): void => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      resolve();
+    };
     const shutdown = (): void => {
-      server.close(() => resolve());
+      if (closing) {
+        return;
+      }
+      closing = true;
+      server.close(finish);
+      server.closeIdleConnections();
+      timeout = setTimeout(() => {
+        server.closeAllConnections();
+        finish();
+      }, timeoutMs);
+      timeout.unref();
+    };
+    shutdown();
+  });
+}
+
+async function waitForMcpShutdown(
+  server: Awaited<ReturnType<typeof startProductionMcpServer>>,
+  timeoutMs: number,
+): Promise<void> {
+  await new Promise<void>((resolve) => {
+    let closing = false;
+    let finished = false;
+    const finish = (): void => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      process.off("SIGINT", shutdown);
+      process.off("SIGTERM", shutdown);
+      resolve();
+    };
+    const shutdown = (): void => {
+      if (closing) {
+        return;
+      }
+      closing = true;
+      const timeout = setTimeout(finish, timeoutMs);
+      timeout.unref();
+      void server.close().finally(() => {
+        clearTimeout(timeout);
+        finish();
+      });
     };
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
   });
-  await database.close();
 }
 
 function option(args: string[], name: string): string | undefined {

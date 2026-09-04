@@ -78,6 +78,7 @@ export class OpenAiCompatibleEmbeddingProvider
               input: texts,
               dimensions: this.dimensions,
             }),
+            redirect: "error",
             signal: AbortSignal.timeout(this.timeoutMs),
         });
         if (!response.ok) {

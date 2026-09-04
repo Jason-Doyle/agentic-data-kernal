@@ -8,6 +8,10 @@ import {
   lineageEndpointSchema,
   type AgentOperation,
 } from "./ir.js";
+import {
+  AGENT_INTENT_VERSION,
+  PACKAGE_VERSION,
+} from "./version.js";
 
 const principalFields = {
   tenantId: z.string().trim().min(1),
@@ -18,7 +22,7 @@ const principalFields = {
 export function createMcpServer(kernel: AgenticKernel): McpServer {
   const server = new McpServer({
     name: "agentic-data-kernel",
-    version: "0.1.0",
+    version: PACKAGE_VERSION,
   });
 
   server.registerResource(
@@ -45,7 +49,7 @@ export function createMcpServer(kernel: AgenticKernel): McpServer {
     {
       title: "Execute Agent Intent",
       description:
-        "Validate and execute one Agent Intent IR v0.1 operation with an execution receipt.",
+        "Validate and execute one Agent Intent operation with an execution receipt.",
       inputSchema: {
         envelope: z.unknown(),
       },
@@ -219,7 +223,7 @@ function envelope(
   idempotencyKey?: string,
 ): object {
   return {
-    protocolVersion: "0.1",
+    protocolVersion: AGENT_INTENT_VERSION,
     requestId: randomUUID(),
     ...(idempotencyKey ? { idempotencyKey } : {}),
     principal: {

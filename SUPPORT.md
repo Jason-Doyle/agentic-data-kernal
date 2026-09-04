@@ -31,5 +31,10 @@ Do not open a public issue for a vulnerability. Follow
 
 ## Support level
 
-This project is maintained on a best-effort basis. The PostgreSQL profile is an
-alpha release and does not include a commercial support commitment.
+The latest 1.x release receives best-effort security and critical correctness
+fixes. Stable support covers the bounded profile in
+[Stability and Compatibility](docs/STABILITY.md).
+
+Older 0.x alpha releases are unsupported after 1.0.0. This project does not
+include a commercial support commitment, uptime SLA, hosted control plane, or
+managed cloud account.

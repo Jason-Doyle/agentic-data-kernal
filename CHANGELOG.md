@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 1.0.0
+
+- Declared Agent Intent 1.0 and the documented TypeScript, HTTP, MCP, CLI,
+  migration, and deployment surfaces stable. Protocol 0.1 remains accepted
+  throughout 1.x.
+- Added per-operation credential, tenant, purpose, and scope revalidation,
+  explicit tenant predicates, strict runtime-role verification, explicit
+  database TLS mode, redirect-free embeddings, and bounded query timeouts.
+- Hardened effect execution with tenant-fair leasing, authorization fences,
+  abort propagation, expired-dispatch reconciliation, worker health endpoints,
+  and crash-after-provider-apply recovery coverage.
+- Added signed coordinated backups, exact migration-manifest verification,
+  artifact integrity reconciliation, filesystem durability barriers, and
+  documented restore-only rollback after migrations begin.
+- Added cumulative Prometheus histograms, worker liveness metrics, bounded
+  timer processing, effect pagination, and graceful process shutdown.
+- Added validated Helm, Azure Container Apps, AWS ECS Fargate, and GKE
+  deployment paths with retained storage and separate runtime and
+  administrative secrets.
+- Added stable compatibility, upgrade, rollback, runbook, package, SBOM,
+  provenance, benchmark, and release gates.
+
 ## 0.3.0-alpha.5
 
 - Added validated Helm, Azure Bicep, AWS OpenTofu, and GCP OpenTofu deployment

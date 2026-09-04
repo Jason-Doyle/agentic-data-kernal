@@ -15,6 +15,10 @@ Read [CONTRACT.md](CONTRACT.md) before using any template.
 Every template requires an explicit immutable application image version or
 digest. No runnable default points at an older release.
 
+When ingress is enabled, configure the exact trusted proxy hop count. The Helm
+chart rejects ingress with `config.trustedProxyHops=0`; the cloud templates set
+the value for their documented single-ingress topology.
+
 The templates intentionally consume existing cloud networks, PostgreSQL
 servers, secret stores, and persistent storage. Landing zones and credentials
 vary substantially between organizations, and placing generated database or

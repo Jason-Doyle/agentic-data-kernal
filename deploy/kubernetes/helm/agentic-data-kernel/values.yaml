@@ -39,6 +39,10 @@ config:
   logLevel: info
   maxBodyBytes: "1000000"
   rateLimitPerMinute: "600"
+  trustedProxyHops: "0"
+  workerMonitorHost: 0.0.0.0
+  workerMonitorPort: "4319"
+  shutdownTimeoutMs: "10000"
 
 api:
   replicaCount: 1

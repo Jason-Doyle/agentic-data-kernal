@@ -5,10 +5,10 @@ embedding providers, effect receivers, and the retail workflow.
 
 ## Install
 
-Use the prerelease distribution tag for evaluation:
+Install the stable package:
 
 ```powershell
-npm install agentic-data-kernel@next
+npm install agentic-data-kernel
 ```
 
 Pin an exact version in applications and production deployments.
@@ -54,7 +54,7 @@ const store = new SqliteStore(".data/app.db");
 const kernel = new AgenticKernel(store);
 
 const result = executeIntent(kernel, {
-  protocolVersion: "0.1",
+  protocolVersion: "1.0",
   requestId: "product-1",
   idempotencyKey: "product-1",
   principal: {

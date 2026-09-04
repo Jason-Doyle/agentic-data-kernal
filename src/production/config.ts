@@ -17,7 +17,7 @@ const optionalEnvironmentValue = z.preprocess(
 
 const baseSchema = z.object({
   DATABASE_URL: z.string().url(),
-  DATABASE_SSL: z.enum(["disable", "require"]).default("disable"),
+  DATABASE_SSL: z.enum(["disable", "require"]),
   DATABASE_CA_CERT_BASE64: optionalEnvironmentValue,
   DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(20),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce
@@ -28,7 +28,7 @@ const baseSchema = z.object({
     .default(30_000),
 });
 
-const serverSchema = baseSchema.extend({
+const serverObjectSchema = baseSchema.extend({
   AUTH_PEPPER: z.string().min(32),
   ARTIFACT_KEYRING: z.string().min(1),
   ARTIFACT_CURRENT_KEY_ID: z.string().trim().min(1),
@@ -101,6 +101,38 @@ const serverSchema = baseSchema.extend({
     .min(1)
     .max(100_000)
     .default(600),
+  TRUSTED_PROXY_HOPS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(5)
+    .default(0),
+  SHUTDOWN_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(60_000)
+    .default(10_000),
+  WORKER_MONITOR_HOST: z.string().trim().min(1).default("127.0.0.1"),
+  WORKER_MONITOR_PORT: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(65_535)
+    .default(4319),
+});
+const serverSchema = serverObjectSchema.superRefine((value, context) => {
+  if (
+    value.EFFECT_LEASE_SECONDS * 1_000 <
+    value.EFFECT_TIMEOUT_MS + 5_000
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["EFFECT_LEASE_SECONDS"],
+      message:
+        "EFFECT_LEASE_SECONDS must exceed EFFECT_TIMEOUT_MS by at least 5 seconds",
+    });
+  }
 });
 
 export interface DatabaseConfig {
@@ -145,6 +177,10 @@ export interface ProductionConfig extends DatabaseConfig {
     | "silent";
   maxBodyBytes: number;
   rateLimitPerMinute: number;
+  trustedProxyHops: number;
+  shutdownTimeoutMs: number;
+  workerMonitorHost: string;
+  workerMonitorPort: number;
 }
 
 export function loadDatabaseConfig(
@@ -178,9 +214,9 @@ export function loadEmbeddingSpaceConfig(
 ): EmbeddingSpace {
   const parsed = parse(
     z.object({
-      EMBEDDING_MODEL: serverSchema.shape.EMBEDDING_MODEL,
-      EMBEDDING_VERSION: serverSchema.shape.EMBEDDING_VERSION,
-      EMBEDDING_DIMENSIONS: serverSchema.shape.EMBEDDING_DIMENSIONS,
+      EMBEDDING_MODEL: serverObjectSchema.shape.EMBEDDING_MODEL,
+      EMBEDDING_VERSION: serverObjectSchema.shape.EMBEDDING_VERSION,
+      EMBEDDING_DIMENSIONS: serverObjectSchema.shape.EMBEDDING_DIMENSIONS,
     }),
     environment,
   );
@@ -236,6 +272,10 @@ export function loadProductionConfig(
     logLevel: parsed.LOG_LEVEL,
     maxBodyBytes: parsed.MAX_BODY_BYTES,
     rateLimitPerMinute: parsed.RATE_LIMIT_PER_MINUTE,
+    trustedProxyHops: parsed.TRUSTED_PROXY_HOPS,
+    shutdownTimeoutMs: parsed.SHUTDOWN_TIMEOUT_MS,
+    workerMonitorHost: parsed.WORKER_MONITOR_HOST,
+    workerMonitorPort: parsed.WORKER_MONITOR_PORT,
   };
 }
 

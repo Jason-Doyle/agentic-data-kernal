@@ -176,6 +176,22 @@ var runtimeEnvironment = concat([
     name: 'LOG_LEVEL'
     value: 'info'
   }
+  {
+    name: 'TRUSTED_PROXY_HOPS'
+    value: '1'
+  }
+  {
+    name: 'WORKER_MONITOR_HOST'
+    value: '0.0.0.0'
+  }
+  {
+    name: 'WORKER_MONITOR_PORT'
+    value: '4319'
+  }
+  {
+    name: 'SHUTDOWN_TIMEOUT_MS'
+    value: '10000'
+  }
 ], databaseCaEnvironment)
 
 resource api 'Microsoft.App/containerApps@2025-07-01' = {
@@ -294,6 +310,32 @@ resource worker 'Microsoft.App/containerApps@2025-07-01' = {
             cpu: json('0.5')
             memory: '1Gi'
           }
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/health/live'
+                port: 4319
+                scheme: 'HTTP'
+              }
+              initialDelaySeconds: 20
+              periodSeconds: 20
+              timeoutSeconds: 3
+              failureThreshold: 3
+            }
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/health/ready'
+                port: 4319
+                scheme: 'HTTP'
+              }
+              initialDelaySeconds: 5
+              periodSeconds: 10
+              timeoutSeconds: 3
+              failureThreshold: 6
+            }
+          ]
           volumeMounts: [
             {
               volumeName: 'artifacts'

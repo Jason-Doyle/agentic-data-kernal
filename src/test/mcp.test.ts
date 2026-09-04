@@ -32,7 +32,7 @@ test("MCP exposes catalog and executes an intent", async () => {
   });
   const catalogText = resource.contents[0];
   assert.ok(catalogText && "text" in catalogText);
-  assert.match(catalogText.text, /\"protocolVersion\": \"0.1\"/);
+  assert.match(catalogText.text, /\"protocolVersion\": \"1.0\"/);
 
   const result = await client.callTool({
     name: "execute_intent",

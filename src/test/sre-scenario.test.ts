@@ -249,6 +249,10 @@ function testConfig(
     logLevel: "silent",
     maxBodyBytes: 1_000_000,
     rateLimitPerMinute: 1_000,
+    trustedProxyHops: 0,
+    shutdownTimeoutMs: 10_000,
+    workerMonitorHost: "127.0.0.1",
+    workerMonitorPort: 4319,
   };
 }
 

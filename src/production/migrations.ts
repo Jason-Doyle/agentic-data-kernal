@@ -214,15 +214,41 @@ export async function migrationStatus(
 export async function assertMigrationsApplied(
   database: ProductionDatabase,
 ): Promise<void> {
-  const result = await database.query<{ applied: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
-       FROM agentic.schema_migrations
-       WHERE version = '003'
-     ) AS applied`,
+  const expectedFiles = (await readdir(postgresMigrationDirectory))
+    .filter((name) => /^\d+_.+\.sql$/.test(name))
+    .sort();
+  const expected = new Map<string, string>();
+  for (const file of expectedFiles) {
+    const version = file.split("_", 1)[0] ?? file;
+    const source = await readFile(
+      join(postgresMigrationDirectory, file),
+      "utf8",
+    );
+    expected.set(
+      version,
+      createHash("sha256").update(source).digest("hex"),
+    );
+  }
+  const result = await database.query<AppliedMigration>(
+    `SELECT version, checksum
+     FROM agentic.schema_migrations
+     ORDER BY version`,
   );
-  if (result.rows[0]?.applied !== true) {
-    throw new Error("Required PostgreSQL migrations are not applied");
+  const actual = new Map(
+    result.rows.map((migration) => [
+      migration.version,
+      migration.checksum,
+    ]),
+  );
+  if (
+    actual.size !== expected.size ||
+    [...expected].some(
+      ([version, checksum]) => actual.get(version) !== checksum,
+    )
+  ) {
+    throw new Error(
+      "PostgreSQL schema is missing, newer than, or incompatible with this runtime",
+    );
   }
 }
 

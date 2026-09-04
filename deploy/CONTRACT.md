@@ -108,6 +108,8 @@ durability semantics.
 
 - Expose only the API.
 - Terminate TLS at the managed ingress or load balancer.
+- Set `TRUSTED_PROXY_HOPS` to the exact number of trusted forwarding hops and
+  prevent direct access to the Node.js listener.
 - Keep PostgreSQL and artifact storage private.
 - Set `HOST=0.0.0.0` and `PORT=4318` for the API container.
 - Apply platform-specific egress controls for PostgreSQL, DNS, the embedding
@@ -119,9 +121,11 @@ durability semantics.
 
 - Liveness: `GET /health/live`
 - Readiness: `GET /health/ready`
+- Worker liveness, readiness, and metrics: port 4319 on the private network
 - Run bootstrap and migrations before increasing API or worker replicas.
 - Use immutable image tags or digests.
 - Restart workloads after rotating environment-injected secrets.
 
 The API rate limiter is process-local. Horizontal replicas multiply the
-effective aggregate request allowance.
+effective aggregate request allowance, so multi-replica deployments require a
+shared ingress or gateway limiter.

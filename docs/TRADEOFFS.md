@@ -139,7 +139,7 @@ application database.
 
 ### Current implementation boundaries
 
-- The release is alpha.
+- Stable support is bounded to the profile in `docs/STABILITY.md`.
 - The included deployment uses one PostgreSQL primary.
 - The default rate limiter is process-local.
 - One embedding space is active per deployment.

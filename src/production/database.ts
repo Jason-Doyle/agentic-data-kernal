@@ -30,6 +30,8 @@ export class ProductionDatabase {
       max: config.databasePoolSize,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
+      statement_timeout: config.statementTimeoutMs,
+      query_timeout: config.statementTimeoutMs + 1_000,
       application_name: "agentic-data-kernel",
       ssl: config.databaseSsl
         ? {

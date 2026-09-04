@@ -9,6 +9,7 @@ import type {
   AssertionRecord,
   CreateWorkflowInput,
   EffectOutcomeInput,
+  EffectListQuery,
   EffectRecord,
   EntityInput,
   EntityRecord,
@@ -325,8 +326,9 @@ export class AgencyLayer {
   public listEffects(
     tenantId: string,
     instanceId?: string,
+    query: EffectListQuery = {},
   ): EffectRecord[] {
-    return this.kernel.listEffects(tenantId, instanceId);
+    return this.kernel.listEffects(tenantId, instanceId, query);
   }
 }
 

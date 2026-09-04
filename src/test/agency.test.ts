@@ -19,6 +19,95 @@ const principal: PrincipalContext = {
   purpose: "incident-response",
 };
 
+test("effect listing preserves legacy unbounded reads and supports pagination", () => {
+  const store = new SqliteStore(":memory:");
+  const kernel = new AgenticKernel(store);
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  try {
+    store.run(
+      `INSERT INTO machine_instances (
+         tenant_id, instance_id, machine_type, state, data_json, revision,
+         terminal, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      principal.tenantId,
+      "incident:pagination",
+      "incident_response",
+      "ready",
+      "{}",
+      1,
+      0,
+      timestamp,
+      timestamp,
+    );
+    store.run(
+      `INSERT INTO machine_history (
+         tenant_id, instance_id, revision, event_id, transition_name,
+         prior_state, new_state, data_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      principal.tenantId,
+      "incident:pagination",
+      1,
+      "event:pagination",
+      "create",
+      "none",
+      "ready",
+      "{}",
+      timestamp,
+    );
+    for (let index = 0; index < 101; index += 1) {
+      const suffix = String(index).padStart(3, "0");
+      store.run(
+        `INSERT INTO effect_intents (
+           tenant_id, effect_id, instance_id, originating_revision,
+           effect_name, effect_type, outcome_handler, target, status_url,
+           request_json, idempotency_key, status, attempt_count,
+           created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        principal.tenantId,
+        `effect:${suffix}`,
+        "incident:pagination",
+        1,
+        `effect_${suffix}`,
+        "test.effect",
+        "none",
+        "https://effects.example.com/apply",
+        "https://effects.example.com/status",
+        "{}",
+        `effect-key-${suffix}`,
+        "planned",
+        0,
+        timestamp,
+        timestamp,
+      );
+    }
+
+    assert.equal(
+      kernel.listEffects(principal.tenantId, "incident:pagination").length,
+      101,
+    );
+    const firstPage = kernel.listEffects(
+      principal.tenantId,
+      "incident:pagination",
+      { limit: 100 },
+    );
+    assert.equal(firstPage.length, 100);
+    const cursor = firstPage[99]?.effectId;
+    assert.ok(cursor);
+    const secondPage = kernel.listEffects(
+      principal.tenantId,
+      "incident:pagination",
+      {
+        afterEffectId: cursor,
+        limit: 100,
+      },
+    );
+    assert.equal(secondPage.length, 1);
+    assert.equal(secondPage[0]?.effectId, "effect:100");
+  } finally {
+    store.close();
+  }
+});
+
 test("generic workflows, effects, and lineage preserve agency history", () => {
   const store = new SqliteStore(":memory:");
   const kernel = new AgenticKernel(store);
@@ -28,6 +117,7 @@ test("generic workflows, effects, and lineage preserve agency history", () => {
       entityType: "service",
       canonicalName: "API Service",
     });
+
     kernel.putArtifact(principal, {
       artifactId: "artifact:alert",
       mediaType: "application/json",

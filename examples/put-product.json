@@ -1,5 +1,5 @@
 {
-  "protocolVersion": "0.1",
+  "protocolVersion": "1.0",
   "requestId": "example-put-product",
   "idempotencyKey": "example-put-product",
   "principal": {

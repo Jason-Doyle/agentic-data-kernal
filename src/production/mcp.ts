@@ -9,6 +9,10 @@ import {
 import type { AuthenticatedPrincipal } from "./auth.js";
 import { productionCatalog } from "./catalog.js";
 import type { ProductionKernel } from "./kernel.js";
+import {
+  AGENT_INTENT_VERSION,
+  PACKAGE_VERSION,
+} from "../version.js";
 
 export function createProductionMcpServer(
   kernel: ProductionKernel,
@@ -16,7 +20,7 @@ export function createProductionMcpServer(
 ): McpServer {
   const server = new McpServer({
     name: "agentic-data-kernel-production",
-    version: "0.2.0",
+    version: PACKAGE_VERSION,
   });
   server.registerResource(
     "agentic-data-production-catalog",
@@ -26,19 +30,22 @@ export function createProductionMcpServer(
       description: "Authenticated production operations and guarantees",
       mimeType: "application/json",
     },
-    async (uri) => ({
-      contents: [
-        {
-          uri: uri.href,
-          mimeType: "application/json",
-          text: JSON.stringify(
-            productionCatalog(kernel.embeddingSpace()),
-            null,
-            2,
-          ),
-        },
-      ],
-    }),
+    async (uri) => {
+      await kernel.revalidatePrincipal(principal);
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify(
+              productionCatalog(kernel.embeddingSpace()),
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
   );
   server.registerTool(
     "execute_operation",
@@ -54,7 +61,7 @@ export function createProductionMcpServer(
     async ({ operation, idempotencyKey }) =>
       toolResult(
         await kernel.execute(principal, {
-          protocolVersion: "0.1",
+          protocolVersion: AGENT_INTENT_VERSION,
           requestId: randomUUID(),
           ...(idempotencyKey ? { idempotencyKey } : {}),
           principal: {
@@ -164,6 +171,7 @@ export async function startProductionMcpServer(
   kernel: ProductionKernel,
   principal: AuthenticatedPrincipal,
 ): Promise<McpServer> {
+  await kernel.assertRuntimeRoleSafe();
   const server = createProductionMcpServer(kernel, principal);
   await server.connect(new StdioServerTransport());
   console.error("Authenticated Agentic Data MCP server running on stdio");

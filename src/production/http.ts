@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { isIP } from "node:net";
 import type { Logger } from "pino";
 import { KernelError } from "../kernel.js";
 import {
@@ -20,6 +21,7 @@ import {
 import type { ProductionKernel } from "./kernel.js";
 import type { MetricsRegistry } from "./metrics.js";
 import { embeddingSpaceStatus } from "./embedding-space.js";
+import { assertRuntimeRoleSafe } from "./bootstrap.js";
 
 export interface ProductionHttpDependencies {
   config: ProductionConfig;
@@ -29,6 +31,28 @@ export interface ProductionHttpDependencies {
   logger: Logger;
 }
 
+export function resolveClientAddress(
+  remoteAddress: string | undefined,
+  forwardedFor: string | string[] | undefined,
+  trustedProxyHops: number,
+): string {
+  const remote = remoteAddress ?? "unknown";
+  if (trustedProxyHops <= 0) {
+    return remote;
+  }
+  const value = Array.isArray(forwardedFor)
+    ? forwardedFor.join(",")
+    : forwardedFor;
+  if (!value) {
+    return remote;
+  }
+  const addresses = value
+    .split(",")
+    .map((address) => address.trim())
+    .filter((address) => isIP(address) !== 0);
+  return addresses[addresses.length - trustedProxyHops] ?? remote;
+}
+
 export async function startProductionHttpServer({
   config,
   database,
@@ -36,6 +60,7 @@ export async function startProductionHttpServer({
   metrics,
   logger,
 }: ProductionHttpDependencies): Promise<import("node:http").Server> {
+  await assertRuntimeRoleSafe(database);
   const limiter = new FixedWindowRateLimiter(config.rateLimitPerMinute);
   const anonymousLimiter = new FixedWindowRateLimiter(
     Math.max(config.rateLimitPerMinute * 5, 1_000),
@@ -89,7 +114,11 @@ export async function startProductionHttpServer({
         return;
       }
 
-      const remoteAddress = request.socket.remoteAddress ?? "unknown";
+      const remoteAddress = resolveClientAddress(
+        request.socket.remoteAddress,
+        request.headers["x-forwarded-for"],
+        config.trustedProxyHops,
+      );
       if (!anonymousLimiter.consume(remoteAddress)) {
         response.setHeader("retry-after", "60");
         sendJson(response, 429, {
@@ -98,6 +127,7 @@ export async function startProductionHttpServer({
         });
         return;
       }
+
       const principal = await authenticateRequest(
         request,
         database,

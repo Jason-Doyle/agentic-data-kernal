@@ -17,7 +17,7 @@
 
 ```json
 {
-  "protocolVersion": "0.1",
+  "protocolVersion": "1.0",
   "requestId": "unique-request-id",
   "idempotencyKey": "stable-retry-key",
   "principal": {
@@ -33,6 +33,9 @@
 operation across retries within a tenant and principal. Reusing a key with
 different operation content in that scope is rejected. Another principal has a
 separate idempotency namespace.
+
+On replay, the outer response contains the current call's `requestId`; the
+durable receipt retains the original request ID.
 
 In the PostgreSQL profile, the supplied principal must exactly match the
 authenticated API key.
@@ -85,6 +88,11 @@ profile accepts terminal effect state only from the effect worker.
 
 `record_effect_outcome` is the development-profile equivalent for generic
 effects. It is rejected by the production API and MCP surface.
+
+`list_effects` accepts optional `afterEffectId` and `limit` fields. `limit`
+must be from 1 through 100. Supplying a cursor without a limit uses 100.
+Omitting both fields preserves the unbounded behavior used by protocol 0.1
+clients. New callers should always paginate.
 
 ## Generic workflows
 
@@ -321,6 +329,9 @@ Internal errors return a generic message and request ID.
 
 ## Versioning
 
-The current envelope version is `0.1`. New required fields or changed operation
-semantics require a new protocol version. Additive optional fields may remain
-within the current version when existing behavior is preserved.
+The stable envelope version is `1.0`. Version `0.1` remains accepted throughout
+the 1.x release line for existing alpha clients. New required fields or changed
+operation semantics require a new protocol version. Additive optional fields
+may remain within the current version when existing behavior is preserved.
+
+See [Stability and Compatibility](STABILITY.md).

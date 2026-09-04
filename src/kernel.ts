@@ -20,8 +20,9 @@ import type {
   AssertionRecord,
   AssertionStatus,
   CreateWorkflowInput,
-  EffectRecord,
+  EffectListQuery,
   EffectOutcomeInput,
+  EffectRecord,
   EffectStatus,
   EntityInput,
   EntityRecord,
@@ -67,6 +68,10 @@ import {
   toJsonValue,
   typedValueText,
 } from "./util.js";
+import {
+  AGENT_INTENT_VERSION,
+  SUPPORTED_AGENT_INTENT_VERSIONS,
+} from "./version.js";
 
 interface AssertionDbRow extends SqlRow {
   tenant_id: string;
@@ -1732,21 +1737,56 @@ export class AgenticKernel {
     return mapWorkflow(row);
   }
 
-  public listEffects(tenantId: string, instanceId?: string): EffectRecord[] {
-    const rows = instanceId
-      ? this.store.all<EffectDbRow>(
-          `SELECT * FROM effect_intents
-           WHERE tenant_id = ? AND instance_id = ?
-           ORDER BY created_at`,
-          tenantId,
-          instanceId,
-        )
-      : this.store.all<EffectDbRow>(
-          `SELECT * FROM effect_intents
-           WHERE tenant_id = ?
-           ORDER BY created_at`,
-          tenantId,
+  public listEffects(
+    tenantId: string,
+    instanceId?: string,
+    query: EffectListQuery = {},
+  ): EffectRecord[] {
+    const conditions = ["tenant_id = ?"];
+    const values: SqlValue[] = [tenantId];
+    if (instanceId) {
+      conditions.push("instance_id = ?");
+      values.push(instanceId);
+    }
+    if (query.afterEffectId) {
+      const cursorConditions = ["tenant_id = ?", "effect_id = ?"];
+      const cursorValues: SqlValue[] = [tenantId, query.afterEffectId];
+      if (instanceId) {
+        cursorConditions.push("instance_id = ?");
+        cursorValues.push(instanceId);
+      }
+      const cursor = this.store.get<EffectDbRow>(
+        `SELECT * FROM effect_intents
+         WHERE ${cursorConditions.join(" AND ")}`,
+        ...cursorValues,
+      );
+      if (!cursor) {
+        throw new KernelError(
+          "not_found",
+          `Effect cursor ${query.afterEffectId} was not found`,
         );
+      }
+      conditions.push(
+        "(created_at > ? OR (created_at = ? AND effect_id > ?))",
+      );
+      values.push(
+        cursor.created_at,
+        cursor.created_at,
+        cursor.effect_id,
+      );
+    }
+    const limit =
+      query.limit ?? (query.afterEffectId ? 100 : undefined);
+    if (limit !== undefined) {
+      values.push(clamp(limit, 1, 100));
+    }
+    const rows = this.store.all<EffectDbRow>(
+      `SELECT * FROM effect_intents
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY created_at, effect_id
+       ${limit === undefined ? "" : "LIMIT ?"}`,
+      ...values,
+    );
     return rows.map(mapEffect);
   }
 
@@ -1875,7 +1915,8 @@ export class AgenticKernel {
 
   public catalog(): LayeredCatalogDescription {
     return {
-      protocolVersion: "0.1",
+      protocolVersion: AGENT_INTENT_VERSION,
+      supportedProtocolVersions: [...SUPPORTED_AGENT_INTENT_VERSIONS],
       storage: "Node.js embedded SQLite with replaceable storage boundary",
       operations: [...DEVELOPMENT_OPERATION_NAMES],
       operationLayers: operationLayerCatalog(
@@ -1919,7 +1960,7 @@ export class AgenticKernel {
       limitations: [
         "single-process local storage",
         "feature-hash embeddings are plumbing, not semantic model quality",
-        "one operation per Agent IR v0.1 envelope",
+        "one operation per Agent Intent 1.0 envelope",
         "local principal identity is caller-asserted",
       ],
     };

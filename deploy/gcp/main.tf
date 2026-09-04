@@ -58,6 +58,7 @@ locals {
       embeddingVersion     = var.embedding_version
       embeddingDimensions  = tostring(var.embedding_dimensions)
       effectAllowedHosts   = var.effect_allowed_hosts
+      trustedProxyHops     = "2"
     }
     databaseProxy = {
       enabled = true

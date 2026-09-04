@@ -7,7 +7,10 @@ export {
   requireScope,
   revokeApiKey,
 } from "./auth.js";
-export { bootstrapRuntimeRole } from "./bootstrap.js";
+export {
+  assertRuntimeRoleSafe,
+  bootstrapRuntimeRole,
+} from "./bootstrap.js";
 export type { RuntimeRoleBootstrapResult } from "./bootstrap.js";
 export type {
   AuthenticatedPrincipal,
@@ -59,6 +62,7 @@ export { ProductionKernel } from "./kernel.js";
 export { createProductionMcpServer } from "./mcp.js";
 export { startProductionHttpServer } from "./http.js";
 export { createProductionRuntime } from "./runtime.js";
+export { startWorkerMonitor } from "./worker-monitor.js";
 export {
   SyntheticRemediationTransport,
   runSreScenario,
@@ -97,3 +101,10 @@ export type {
   RetailCompatibilityOperation,
   RetailCompatibilityOperationName,
 } from "../layers.js";
+export {
+  AGENT_INTENT_VERSION,
+  LEGACY_AGENT_INTENT_VERSION,
+  PACKAGE_VERSION,
+  SUPPORTED_AGENT_INTENT_VERSIONS,
+} from "../version.js";
+export type { AgentIntentVersion } from "../version.js";

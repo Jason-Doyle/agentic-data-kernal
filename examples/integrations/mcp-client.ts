@@ -78,7 +78,7 @@ async function executeIntent(
     name: "execute_intent",
     arguments: {
       envelope: {
-        protocolVersion: "0.1",
+        protocolVersion: "1.0",
         requestId: `mcp-${idempotencyKey}`,
         idempotencyKey,
         principal: {

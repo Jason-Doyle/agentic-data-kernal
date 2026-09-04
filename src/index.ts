@@ -44,3 +44,10 @@ export {
   traceEndpointKey,
 } from "./explain.js";
 export type * from "./types.js";
+export {
+  AGENT_INTENT_VERSION,
+  LEGACY_AGENT_INTENT_VERSION,
+  PACKAGE_VERSION,
+  SUPPORTED_AGENT_INTENT_VERSIONS,
+} from "./version.js";
+export type { AgentIntentVersion } from "./version.js";

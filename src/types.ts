@@ -1,3 +1,5 @@
+import type { AgentIntentVersion } from "./version.js";
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue =
   | JsonPrimitive
@@ -247,6 +249,11 @@ export interface EffectRecord {
   updatedAt: string;
 }
 
+export interface EffectListQuery {
+  afterEffectId?: string;
+  limit?: number;
+}
+
 export type LineageRelation =
   | "evidence_for"
   | "supports"
@@ -388,7 +395,8 @@ export interface OperationLayerCatalog {
 }
 
 export interface CatalogDescription {
-  protocolVersion: "0.1";
+  protocolVersion: AgentIntentVersion;
+  supportedProtocolVersions: AgentIntentVersion[];
   storage: string;
   operations: string[];
   operationLayers?: OperationLayerCatalog;

@@ -43,6 +43,7 @@ $templateArguments = @(
     "--set", "ingress.tls[0].hosts[0]=agentic-data.example.com",
     "--set-string", "ingress.tlsOnlyAnnotation=nginx.ingress.kubernetes.io/ssl-redirect",
     "--set-string", "ingress.tlsOnlyValue=true",
+    "--set-string", "config.trustedProxyHops=1",
     "--set", "databaseProxy.enabled=true",
     "--set", "databaseProxy.image=database-proxy:validation",
     "--set-string", "databaseProxy.args[0]=--private-ip",

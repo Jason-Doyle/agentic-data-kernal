@@ -25,6 +25,9 @@ loopback hop while the proxy authenticates and encrypts the Cloud SQL
 connection.
 The API Service is annotated for a standalone GKE NEG so GCE ingress has a
 container-native backend even when automatic NEG injection is unavailable.
+The module trusts two `X-Forwarded-For` hops for the documented GCE load
+balancer topology so the pre-authentication limiter keys the originating
+client rather than the load balancer.
 
 Create the namespace, both Secrets, and Filestore-backed PVC before applying
 this module. The required Secret keys are listed in the

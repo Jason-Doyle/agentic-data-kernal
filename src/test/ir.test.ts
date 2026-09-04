@@ -27,10 +27,15 @@ test("intent execution returns a receipt and replays idempotently", () => {
   };
 
   const first = executeIntent(kernel, envelope);
-  const replay = executeIntent(kernel, envelope);
+  const replay = executeIntent(kernel, {
+    ...envelope,
+    requestId: "request-2",
+  });
   assert.equal(first.idempotentReplay, false);
   assert.equal(replay.idempotentReplay, true);
   assert.equal(first.receipt.receiptId, replay.receipt.receiptId);
+  assert.equal(replay.requestId, "request-2");
+  assert.equal(replay.receipt.requestId, "request-1");
   assert.deepEqual(first.result, replay.result);
   assert.throws(
     () =>
@@ -48,6 +53,38 @@ test("intent execution returns a receipt and replays idempotently", () => {
     /already used for a different request/,
   );
   store.close();
+});
+
+test("Agent Intent 1.0 is stable while 0.1 remains compatible", () => {
+  const store = new SqliteStore(":memory:");
+  const kernel = new AgenticKernel(store);
+  try {
+    const result = executeIntent(kernel, {
+      protocolVersion: "1.0",
+      requestId: "stable-request",
+      principal: {
+        tenantId: "stable-tenant",
+        principalId: "stable-agent",
+        purpose: "test",
+      },
+      operation: {
+        op: "put_entity",
+        entity: {
+          entityId: "entity:stable",
+          entityType: "test",
+          canonicalName: "Stable Entity",
+        },
+      },
+    });
+    assert.equal(result.protocolVersion, "1.0");
+    assert.equal(kernel.catalog().protocolVersion, "1.0");
+    assert.deepEqual(
+      kernel.catalog().supportedProtocolVersions,
+      ["0.1", "1.0"],
+    );
+  } finally {
+    store.close();
+  }
 });
 
 test("human SQL surface rejects writes", () => {

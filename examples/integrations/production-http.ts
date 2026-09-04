@@ -10,7 +10,7 @@ const config = {
 
 const catalog = await request("GET", "/v1/catalog");
 const execution = await request("POST", "/v1/execute", {
-  protocolVersion: "0.1",
+  protocolVersion: "1.0",
   requestId: randomUUID(),
   idempotencyKey: `http-example-${Date.now()}`,
   principal: {

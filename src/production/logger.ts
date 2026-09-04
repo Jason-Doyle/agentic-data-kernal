@@ -1,5 +1,6 @@
 import pino, { type Logger } from "pino";
 import type { ProductionConfig } from "./config.js";
+import { PACKAGE_VERSION } from "../version.js";
 
 export function createLogger(
   config: Pick<ProductionConfig, "logLevel">,
@@ -20,7 +21,7 @@ export function createLogger(
     },
     base: {
       service: "agentic-data-kernel",
-      version: "0.2.0",
+      version: PACKAGE_VERSION,
     },
     timestamp: pino.stdTimeFunctions.isoTime,
   });
