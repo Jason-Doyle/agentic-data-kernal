@@ -32,16 +32,19 @@ export interface CreateApiKeyInput {
   expiresAt?: string;
 }
 
-interface ApiKeyRow {
+interface ActiveApiKeyRow {
   key_id: string;
   tenant_id: string;
   principal_id: string;
-  token_hash: string;
   scopes: string[];
   purposes: string[];
   expires_at: Date | null;
   revoked_at: Date | null;
   tenant_active: boolean;
+}
+
+interface AuthenticationApiKeyRow extends ActiveApiKeyRow {
+  token_hash: string;
 }
 
 export interface AuthenticatedPrincipal extends TenantContext {
@@ -110,7 +113,7 @@ export async function authenticateToken(
   purpose: string,
 ): Promise<AuthenticatedPrincipal> {
   const parsed = parseToken(token);
-  const result = await database.query<ApiKeyRow>(
+  const result = await database.query<AuthenticationApiKeyRow>(
     `SELECT
        k.key_id,
        k.tenant_id,
@@ -127,31 +130,42 @@ export async function authenticateToken(
     [parsed.keyId],
   );
   const row = result.rows[0];
-  const activeRow = requireActiveApiKey(row);
+  assertActiveApiKey(row);
   const supplied = Buffer.from(
     await deriveTokenHash(token, config.authPepper, parsed.keyId),
     "hex",
   );
-  const expected = Buffer.from(activeRow.token_hash, "hex");
+  const expected = Buffer.from(row.token_hash, "hex");
   if (
     supplied.length !== expected.length ||
     !timingSafeEqual(supplied, expected)
   ) {
     throw new AuthenticationError("Invalid or revoked API key");
   }
-  return principalFromActiveRow(activeRow, purpose);
+  return principalFromActiveRow(
+    {
+      key_id: row.key_id,
+      tenant_id: row.tenant_id,
+      principal_id: row.principal_id,
+      scopes: row.scopes,
+      purposes: row.purposes,
+      expires_at: row.expires_at,
+      revoked_at: row.revoked_at,
+      tenant_active: row.tenant_active,
+    },
+    purpose,
+  );
 }
 
 export async function revalidatePrincipal(
   client: PoolClient,
   principal: AuthenticatedPrincipal,
 ): Promise<AuthenticatedPrincipal> {
-  const result = await client.query<ApiKeyRow>(
+  const result = await client.query<ActiveApiKeyRow>(
     `SELECT
        k.key_id,
        k.tenant_id,
        k.principal_id,
-       k.token_hash,
        k.scopes,
        k.purposes,
        k.expires_at,
@@ -164,26 +178,24 @@ export async function revalidatePrincipal(
        AND k.principal_id = $3`,
     [principal.keyId, principal.tenantId, principal.principalId],
   );
-  return principalFromActiveRow(
-    requireActiveApiKey(result.rows[0]),
-    principal.purpose,
-  );
+  const row = result.rows[0];
+  assertActiveApiKey(row);
+  return principalFromActiveRow(row, principal.purpose);
 }
 
-function requireActiveApiKey(
-  row: ApiKeyRow | undefined,
-): ApiKeyRow {
+function assertActiveApiKey(
+  row: ActiveApiKeyRow | undefined,
+): asserts row is ActiveApiKeyRow {
   if (!row || !row.tenant_active || row.revoked_at !== null) {
     throw new AuthenticationError("Invalid or revoked API key");
   }
   if (row.expires_at && row.expires_at.getTime() <= Date.now()) {
     throw new AuthenticationError("API key has expired");
   }
-  return row;
 }
 
 function principalFromActiveRow(
-  row: ApiKeyRow,
+  row: ActiveApiKeyRow,
   purpose: string,
 ): AuthenticatedPrincipal {
   const purposes = new Set(row.purposes);
