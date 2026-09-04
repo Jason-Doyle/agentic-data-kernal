@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added validated Helm, Azure Bicep, AWS OpenTofu, and GCP OpenTofu deployment
+  templates with one shared security and runtime contract.
+- Added an idempotent `bootstrap-role` production command for cloud migration
+  workflows.
 - Rebuilt the README around the agent-first thesis, SRE proof, causal trace,
   comparative evidence, measured costs, and explicit fit boundaries.
 

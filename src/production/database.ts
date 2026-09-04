@@ -4,6 +4,7 @@ import {
   type QueryResult,
   type QueryResultRow,
 } from "pg";
+import { checkServerIdentity } from "node:tls";
 import type { DatabaseConfig } from "./config.js";
 
 export interface TenantContext {
@@ -20,13 +21,27 @@ export class ProductionDatabase {
   public readonly pool: Pool;
 
   public constructor(private readonly config: DatabaseConfig) {
+    const connectionString = validatedConnectionString(
+      config.databaseUrl,
+    );
+    const databaseHostname = databaseHostnameFor(connectionString);
     this.pool = new Pool({
-      connectionString: config.databaseUrl,
+      connectionString,
       max: config.databasePoolSize,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
       application_name: "agentic-data-kernel",
-      ssl: config.databaseSsl ? { rejectUnauthorized: true } : undefined,
+      ssl: config.databaseSsl
+        ? {
+            rejectUnauthorized: true,
+            ...(config.databaseCaCertificate
+              ? { ca: config.databaseCaCertificate }
+              : {}),
+            checkServerIdentity: (_hostname, certificate) =>
+              checkServerIdentity(databaseHostname, certificate),
+          }
+        : false,
+      sslnegotiation: "postgres",
     });
   }
 
@@ -147,6 +162,35 @@ export class ProductionDatabase {
       );
     }
   }
+}
+
+function validatedConnectionString(value: string): string {
+  const url = new URL(value);
+  const forbidden = new Set([
+    "ssl",
+    "sslcert",
+    "sslkey",
+    "sslmode",
+    "sslnegotiation",
+    "sslrootcert",
+    "uselibpqcompat",
+  ]);
+  const conflicts = [...url.searchParams.keys()].filter((name) =>
+    forbidden.has(name.toLowerCase()),
+  );
+  if (conflicts.length > 0) {
+    throw new Error(
+      "DATABASE_URL must not contain SSL query parameters; use DATABASE_SSL and DATABASE_CA_CERT_BASE64",
+    );
+  }
+  return value;
+}
+
+function databaseHostnameFor(connectionString: string): string {
+  const hostname = new URL(connectionString).hostname;
+  return hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
 }
 
 export class MaintenanceModeError extends Error {

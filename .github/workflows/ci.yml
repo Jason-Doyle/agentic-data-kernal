@@ -47,6 +47,15 @@ jobs:
       - name: Check production CLI
         run: docker run --rm agentic-data-kernel:test node dist/production/cli.js --help
 
+  deployments:
+    name: Deployment templates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate Helm, Bicep, and OpenTofu
+        shell: pwsh
+        run: ./scripts/validate-deployments.ps1
+
   postgres:
     name: PostgreSQL integration
     runs-on: ubuntu-latest

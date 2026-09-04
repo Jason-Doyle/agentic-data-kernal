@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import type { PeerCertificate } from "node:tls";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -19,9 +20,11 @@ import {
   revokeApiKey,
   type AuthenticatedPrincipal,
 } from "../production/auth.js";
+import { bootstrapRuntimeRole } from "../production/bootstrap.js";
 import { reconcileArtifactFiles } from "../production/artifact-reconciliation.js";
 import {
   configuredEmbeddingSpace,
+  loadDatabaseConfig,
   loadEmbeddingSpaceConfig,
   type ProductionConfig,
 } from "../production/config.js";
@@ -57,6 +60,174 @@ import { buildHybridSearchQuery } from "../production/search.js";
 const databaseUrl = process.env.PRODUCTION_TEST_DATABASE_URL;
 const migrationDatabaseUrl =
   process.env.PRODUCTION_TEST_MIGRATION_DATABASE_URL;
+
+test(
+  "runtime role bootstrap is idempotent and preserves restricted attributes",
+  { skip: !migrationDatabaseUrl },
+  async () => {
+    assert.ok(migrationDatabaseUrl);
+    const password =
+      process.env.APP_DATABASE_PASSWORD ?? "ci-application-password";
+    const first = await bootstrapRuntimeRole(
+      {
+        databaseUrl: migrationDatabaseUrl,
+        databaseSsl: false,
+        databasePoolSize: 2,
+        statementTimeoutMs: 30_000,
+      },
+      password,
+    );
+    assert.equal(first.role, "agentic_app");
+    const second = await bootstrapRuntimeRole(
+      {
+        databaseUrl: migrationDatabaseUrl,
+        databaseSsl: false,
+        databasePoolSize: 2,
+        statementTimeoutMs: 30_000,
+      },
+      password,
+    );
+    assert.deepEqual(second, {
+      role: "agentic_app",
+      created: false,
+    });
+    const appUrl = new URL(migrationDatabaseUrl);
+    appUrl.username = "agentic_app";
+    appUrl.password = password;
+    const appClient = new PgClient({ connectionString: appUrl.toString() });
+    await appClient.connect();
+    try {
+      const identity = await appClient.query<{ role_name: string }>(
+        "SELECT current_user AS role_name",
+      );
+      assert.equal(identity.rows[0]?.role_name, "agentic_app");
+    } finally {
+      await appClient.end();
+    }
+    const client = new PgClient({ connectionString: migrationDatabaseUrl });
+    await client.connect();
+    try {
+      const role = await client.query<{
+        rolcanlogin: boolean;
+        rolsuper: boolean;
+        rolcreatedb: boolean;
+        rolcreaterole: boolean;
+        rolinherit: boolean;
+        rolbypassrls: boolean;
+      }>(
+        `SELECT
+           rolcanlogin,
+           rolsuper,
+           rolcreatedb,
+           rolcreaterole,
+           rolinherit,
+           rolbypassrls
+         FROM pg_roles
+         WHERE rolname = 'agentic_app'`,
+      );
+      assert.deepEqual(role.rows[0], {
+        rolcanlogin: true,
+        rolsuper: false,
+        rolcreatedb: false,
+        rolcreaterole: false,
+        rolinherit: false,
+        rolbypassrls: false,
+      });
+    } finally {
+      await client.end();
+    }
+  },
+);
+
+test(
+  "runtime role bootstrap rejects object ownership",
+  { skip: !migrationDatabaseUrl },
+  async () => {
+    assert.ok(migrationDatabaseUrl);
+    const schemaName =
+      `bootstrap_owned_${randomUUID().replaceAll("-", "")}`;
+    const administrator = new PgClient({
+      connectionString: migrationDatabaseUrl,
+    });
+    await administrator.connect();
+    try {
+      await administrator.query(
+        `CREATE SCHEMA "${schemaName}" AUTHORIZATION agentic_app`,
+      );
+      await assert.rejects(
+        () =>
+          bootstrapRuntimeRole(
+            {
+              databaseUrl: migrationDatabaseUrl,
+              databaseSsl: false,
+              databasePoolSize: 2,
+              statementTimeoutMs: 30_000,
+            },
+            process.env.APP_DATABASE_PASSWORD ??
+              "ci-application-password",
+          ),
+        /must not own database objects/,
+      );
+    } finally {
+      await administrator.query(
+        `DROP SCHEMA IF EXISTS "${schemaName}"`,
+      );
+      await administrator.end();
+    }
+  },
+);
+
+test(
+  "runtime role bootstrap requires admin option when the role exists",
+  { skip: !migrationDatabaseUrl },
+  async () => {
+    assert.ok(migrationDatabaseUrl);
+    const suffix = randomUUID().replaceAll("-", "");
+    const roleName = `bootstrap_limited_${suffix}`;
+    const rolePassword = `limited-${suffix}`;
+    const appPassword =
+      process.env.APP_DATABASE_PASSWORD ?? "ci-application-password";
+    const administrator = new PgClient({
+      connectionString: migrationDatabaseUrl,
+    });
+    await administrator.connect();
+    try {
+      await administrator.query(
+        `CREATE ROLE "${roleName}"
+         LOGIN CREATEROLE PASSWORD '${rolePassword}'`,
+      );
+      const url = new URL(migrationDatabaseUrl);
+      url.username = roleName;
+      url.password = rolePassword;
+      const config = {
+        databaseUrl: url.toString(),
+        databaseSsl: false,
+        databasePoolSize: 2,
+        statementTimeoutMs: 30_000,
+      };
+      await assert.rejects(
+        () => bootstrapRuntimeRole(config, appPassword),
+        /ADMIN OPTION/,
+      );
+      await administrator.query(
+        `GRANT agentic_app TO "${roleName}"
+         WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`,
+      );
+      assert.deepEqual(
+        await bootstrapRuntimeRole(config, appPassword),
+        {
+          role: "agentic_app",
+          created: false,
+        },
+      );
+    } finally {
+      await administrator.query(
+        `DROP ROLE IF EXISTS "${roleName}"`,
+      );
+      await administrator.end();
+    }
+  },
+);
 
 test("packaged migrations resolve relative to the module", () => {
   const migrations = readdirSync(postgresMigrationDirectory);
@@ -100,6 +271,264 @@ test("embedding dimensions are validated as deployment configuration", () => {
     /must not be zero vectors/,
   );
 });
+
+test("database TLS accepts an explicit base64 PEM trust bundle", async () => {
+  assert.deepEqual(
+    loadDatabaseConfig({
+      DATABASE_URL: "postgresql://example:password@database.example/test",
+      DATABASE_CA_CERT_BASE64: "",
+    }),
+    {
+      databaseUrl:
+        "postgresql://example:password@database.example/test",
+      databaseSsl: false,
+      databasePoolSize: 20,
+      statementTimeoutMs: 30_000,
+    },
+  );
+  const certificate = [
+    "-----BEGIN CERTIFICATE-----",
+    "test-certificate",
+    "-----END CERTIFICATE-----",
+  ].join("\n");
+  assert.deepEqual(
+    loadDatabaseConfig({
+      DATABASE_URL: "postgresql://example:password@database.example/test",
+      DATABASE_SSL: "require",
+      DATABASE_CA_CERT_BASE64:
+        Buffer.from(certificate, "utf8").toString("base64"),
+    }),
+    {
+      databaseUrl:
+        "postgresql://example:password@database.example/test",
+      databaseSsl: true,
+      databaseCaCertificate: certificate,
+      databasePoolSize: 20,
+      statementTimeoutMs: 30_000,
+    },
+  );
+  assert.throws(
+    () =>
+      loadDatabaseConfig({
+        DATABASE_URL:
+          "postgresql://example:password@database.example/test",
+        DATABASE_SSL: "require",
+        DATABASE_CA_CERT_BASE64:
+          Buffer.from("not a certificate", "utf8").toString("base64"),
+      }),
+    /PEM certificate bundle/,
+  );
+  assert.throws(
+    () =>
+      new ProductionDatabase({
+        databaseUrl:
+          "postgresql://example:password@database.example/test?sslmode=disable",
+        databaseSsl: true,
+        databasePoolSize: 1,
+        statementTimeoutMs: 30_000,
+      }),
+    /must not contain SSL query parameters/,
+  );
+  assert.throws(
+    () =>
+      new ProductionDatabase({
+        databaseUrl:
+          "postgresql://example:password@database.example/test?sslnegotiation=direct",
+        databaseSsl: true,
+        databasePoolSize: 1,
+        statementTimeoutMs: 30_000,
+      }),
+    /must not contain SSL query parameters/,
+  );
+  const database = new ProductionDatabase({
+    databaseUrl:
+      "postgresql://example:password@127.0.0.1/test",
+    databaseSsl: true,
+    databasePoolSize: 1,
+    statementTimeoutMs: 30_000,
+  });
+  try {
+    const ssl = database.pool.options.ssl;
+    assert.ok(
+      ssl !== null &&
+        typeof ssl === "object" &&
+        typeof ssl.checkServerIdentity === "function",
+    );
+    const mismatch = ssl.checkServerIdentity(
+      "localhost",
+      {
+        subject: { CN: "localhost" },
+        subjectaltname: "DNS:localhost",
+      } as PeerCertificate,
+    );
+    assert.ok(mismatch);
+    assert.match(mismatch.message, /127\.0\.0\.1/);
+  } finally {
+    await database.close();
+  }
+});
+
+test(
+  "runtime role bootstrap rejects inherited role capabilities",
+  { skip: !migrationDatabaseUrl },
+  async () => {
+    assert.ok(migrationDatabaseUrl);
+    const roleName =
+      `bootstrap_parent_${randomUUID().replaceAll("-", "")}`;
+    const administrator = new PgClient({
+      connectionString: migrationDatabaseUrl,
+    });
+    await administrator.connect();
+    try {
+      await administrator.query(`CREATE ROLE "${roleName}" NOLOGIN`);
+      await administrator.query(`GRANT "${roleName}" TO agentic_app`);
+      await assert.rejects(
+        () =>
+          bootstrapRuntimeRole(
+            {
+              databaseUrl: migrationDatabaseUrl,
+              databaseSsl: false,
+              databasePoolSize: 2,
+              statementTimeoutMs: 30_000,
+            },
+            process.env.APP_DATABASE_PASSWORD ??
+              "ci-application-password",
+          ),
+        /must not belong to other roles/,
+      );
+    } finally {
+      await administrator.query(
+        `REVOKE "${roleName}" FROM agentic_app`,
+      );
+      await administrator.query(`DROP ROLE IF EXISTS "${roleName}"`);
+      await administrator.end();
+    }
+  },
+);
+
+test(
+  "runtime role bootstrap rejects members of the runtime role",
+  { skip: !migrationDatabaseUrl },
+  async () => {
+    assert.ok(migrationDatabaseUrl);
+    const roleName =
+      `bootstrap_member_${randomUUID().replaceAll("-", "")}`;
+    const administrator = new PgClient({
+      connectionString: migrationDatabaseUrl,
+    });
+    await administrator.connect();
+    try {
+      await administrator.query(`CREATE ROLE "${roleName}" LOGIN`);
+      await administrator.query(`GRANT agentic_app TO "${roleName}"`);
+      await assert.rejects(
+        () =>
+          bootstrapRuntimeRole(
+            {
+              databaseUrl: migrationDatabaseUrl,
+              databaseSsl: false,
+              databasePoolSize: 2,
+              statementTimeoutMs: 30_000,
+            },
+            process.env.APP_DATABASE_PASSWORD ??
+              "ci-application-password",
+          ),
+        /must not have privilege-bearing role members/,
+      );
+    } finally {
+      await administrator.query(
+        `REVOKE agentic_app FROM "${roleName}"`,
+      );
+      await administrator.query(`DROP ROLE IF EXISTS "${roleName}"`);
+      await administrator.end();
+    }
+  },
+);
+
+test(
+  "migration reruns reconcile runtime role grants",
+  { skip: !migrationDatabaseUrl },
+  async () => {
+    assert.ok(migrationDatabaseUrl);
+    const databaseName =
+      `agentic_grants_${randomUUID().replaceAll("-", "")}`;
+    const control = new PgClient({
+      connectionString: databaseUrlFor(
+        migrationDatabaseUrl,
+        "postgres",
+      ),
+    });
+    await control.connect();
+    try {
+      await control.query(`CREATE DATABASE ${databaseName}`);
+      const adminUrl = databaseUrlFor(
+        migrationDatabaseUrl,
+        databaseName,
+      );
+      const config = {
+        databaseUrl: adminUrl,
+        databaseSsl: false,
+        databasePoolSize: 2,
+        statementTimeoutMs: 30_000,
+      };
+      await bootstrapRuntimeRole(
+        config,
+        process.env.APP_DATABASE_PASSWORD ??
+          "ci-application-password",
+      );
+      await migratePostgres(config);
+      const database = new ProductionDatabase(config);
+      try {
+        await database.query(
+          `REVOKE CONNECT ON DATABASE "${databaseName}"
+           FROM PUBLIC, agentic_app`,
+        );
+        await database.query(
+          "REVOKE SELECT ON agentic.entities FROM agentic_app",
+        );
+      } finally {
+        await database.close();
+      }
+      await migratePostgres(config);
+      const verified = new ProductionDatabase(config);
+      try {
+        const privileges = await verified.query<{
+          database_connect: boolean;
+          entity_select: boolean;
+          embedding_insert: boolean;
+        }>(
+          `SELECT
+             has_database_privilege(
+               'agentic_app',
+               current_database(),
+               'CONNECT'
+             ) AS database_connect,
+             has_table_privilege(
+               'agentic_app',
+               'agentic.entities',
+               'SELECT'
+             ) AS entity_select,
+             has_table_privilege(
+               'agentic_app',
+               'agentic.embedding_configuration',
+               'INSERT'
+             ) AS embedding_insert`,
+        );
+        assert.deepEqual(privileges.rows[0], {
+          database_connect: true,
+          entity_select: true,
+          embedding_insert: false,
+        });
+      } finally {
+        await verified.close();
+      }
+    } finally {
+      await control.query(
+        `DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`,
+      );
+      await control.end();
+    }
+  },
+);
 
 test(
   "embedding migration preserves an existing 1536-dimensional space",

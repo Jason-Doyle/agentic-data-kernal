@@ -8,3 +8,8 @@ dist/
 *.db-wal
 *.log
 .DS_Store
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example

@@ -1,0 +1,27 @@
+# Copy this file, then uncomment and replace every example before deployment.
+# project_id             = "example-project"
+# location               = "us-central1"
+# cluster_name           = "agentic-autopilot"
+# namespace              = "agentic-data"
+# release_name           = "agentic-data"
+# image_tag              = "0.3.0-alpha.5"
+# image_digest           = ""
+# artifact_pvc_name      = "agentic-data-filestore"
+# runtime_kubernetes_secret_name = "agentic-data-runtime"
+# admin_kubernetes_secret_name   = "agentic-data-admin"
+# job_service_account_name        = "agentic-data-jobs"
+# gcp_service_account_email       = "agentic-data@example-project.iam.gserviceaccount.com"
+# cloud_sql_instance_connection_name = "example-project:us-central1:agentic-data"
+# database_proxy_image = "gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.18.2"
+# embedding_base_url     = "https://api.openai.com/v1"
+# artifact_current_key_id = "v1"
+# effect_allowed_hosts   = "payments.example.com,deployments.example.com"
+#
+# ingress_enabled    = true
+# ingress_class_name = ""
+# ingress_host       = "agentic-data.example.com"
+# ingress_tls_secret_name = "agentic-data-tls"
+# ingress_annotations = {
+#   "kubernetes.io/ingress.class"                 = "gce"
+#   "kubernetes.io/ingress.global-static-ip-name" = "agentic-data"
+# }

@@ -37,12 +37,20 @@ try {
     "dist/index.d.ts",
     "dist/production/index.js",
     "dist/production/index.d.ts",
+    "dist/production/bootstrap.js",
+    "dist/production/bootstrap.d.ts",
     "dist/examples/sre-scenario.js",
     "migrations/postgres/001_core.sql",
     "migrations/postgres/002_embedding_space.sql",
     "migrations/postgres/003_generic_agency.sql",
     "benchmarks/sre/README.md",
     "benchmarks/sre/baseline-schema.sql",
+    "deploy/CONTRACT.md",
+    "deploy/azure/main.bicep",
+    "deploy/aws/main.tf",
+    "deploy/gcp/main.tf",
+    "deploy/kubernetes/helm/agentic-data-kernel/Chart.yaml",
+    "scripts/validate-deployments.ps1",
     "README.md",
     "LICENSE",
   ]) {
@@ -108,6 +116,7 @@ try {
       formatTraceExplanation,
     } from "agentic-data-kernel";
 import {
+  bootstrapRuntimeRole,
   OpenAiCompatibleEmbeddingProvider,
   postgresMigrationDirectory,
 } from "agentic-data-kernel/production";
@@ -122,6 +131,9 @@ try {
   }
   if (typeof OpenAiCompatibleEmbeddingProvider !== "function") {
     throw new Error("Production package export is unavailable");
+  }
+  if (typeof bootstrapRuntimeRole !== "function") {
+    throw new Error("Runtime role bootstrap export is unavailable");
   }
   if (typeof formatTraceExplanation !== "function") {
     throw new Error("Trace formatter export is unavailable");
@@ -160,6 +172,7 @@ try {
       formatTraceExplanation,
     } from "agentic-data-kernel";
 import {
+  bootstrapRuntimeRole,
   type EmbeddingSpace,
   ProductionDatabase,
   postgresMigrationDirectory,
@@ -171,6 +184,7 @@ const knowledgeLayer: KnowledgeLayer = kernel.knowledge;
 const knowledgeOperation: KnowledgeOperationName = "assert";
 const formatter: typeof formatTraceExplanation = formatTraceExplanation;
 const databaseType: typeof ProductionDatabase = ProductionDatabase;
+const bootstrapType: typeof bootstrapRuntimeRole = bootstrapRuntimeRole;
 const migrationPath: string = postgresMigrationDirectory;
 const embeddingSpace: EmbeddingSpace = {
   model: "test",
@@ -182,6 +196,7 @@ void knowledgeLayer;
 void knowledgeOperation;
 void formatter;
 void databaseType;
+void bootstrapType;
 void migrationPath;
 void embeddingSpace;
 store.close();

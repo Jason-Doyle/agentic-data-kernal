@@ -7,6 +7,8 @@ export {
   requireScope,
   revokeApiKey,
 } from "./auth.js";
+export { bootstrapRuntimeRole } from "./bootstrap.js";
+export type { RuntimeRoleBootstrapResult } from "./bootstrap.js";
 export type {
   AuthenticatedPrincipal,
   CreateApiKeyInput,

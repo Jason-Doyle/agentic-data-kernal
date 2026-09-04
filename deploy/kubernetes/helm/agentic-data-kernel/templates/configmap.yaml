@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentic-data-kernel.fullname" . }}
+  labels:
+    {{- include "agentic-data-kernel.labels" . | nindent 4 }}
+data:
+  DATABASE_SSL: {{ .Values.config.databaseSsl | quote }}
+  DATABASE_POOL_SIZE: {{ .Values.config.databasePoolSize | quote }}
+  DATABASE_STATEMENT_TIMEOUT_MS: {{ .Values.config.databaseStatementTimeoutMs | quote }}
+  ARTIFACT_CURRENT_KEY_ID: {{ .Values.config.artifactCurrentKeyId | quote }}
+  ARTIFACT_DIR: {{ .Values.config.artifactDirectory | quote }}
+  EMBEDDING_BASE_URL: {{ .Values.config.embeddingBaseUrl | quote }}
+  EMBEDDING_MODEL: {{ .Values.config.embeddingModel | quote }}
+  EMBEDDING_VERSION: {{ .Values.config.embeddingVersion | quote }}
+  EMBEDDING_DIMENSIONS: {{ .Values.config.embeddingDimensions | quote }}
+  EMBEDDING_TIMEOUT_MS: {{ .Values.config.embeddingTimeoutMs | quote }}
+  SEARCH_CANDIDATE_LIMIT: {{ .Values.config.searchCandidateLimit | quote }}
+  HNSW_EF_SEARCH: {{ .Values.config.hnswEfSearch | quote }}
+  HNSW_MAX_SCAN_TUPLES: {{ .Values.config.hnswMaxScanTuples | quote }}
+  EFFECT_ALLOWED_HOSTS: {{ .Values.config.effectAllowedHosts | quote }}
+  EFFECT_TIMEOUT_MS: {{ .Values.config.effectTimeoutMs | quote }}
+  EFFECT_LEASE_SECONDS: {{ .Values.config.effectLeaseSeconds | quote }}
+  EFFECT_MAX_ATTEMPTS: {{ .Values.config.effectMaxAttempts | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  MAX_BODY_BYTES: {{ .Values.config.maxBodyBytes | quote }}
+  RATE_LIMIT_PER_MINUTE: {{ .Values.config.rateLimitPerMinute | quote }}
+  HOST: "0.0.0.0"
+  PORT: "4318"
