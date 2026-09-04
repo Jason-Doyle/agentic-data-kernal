@@ -1,5 +1,31 @@
 export { AgenticKernel, KernelError } from "./kernel.js";
 export {
+  AgentDataMiddleware,
+  createAgentDataMiddleware,
+  createEmbeddedAgentMiddleware,
+  DEFAULT_MODEL_OPERATION_NAMES,
+} from "./agent.js";
+export type {
+  AgentContextBundle,
+  AgentContextRequest,
+  AgentContextResolution,
+  AgentContextSearch,
+  AgentContextSection,
+  AgentContextTrace,
+  AgentDataMiddlewareConfig,
+  AgentDataSession,
+  AgentIntentExecutor,
+  AgentModelInput,
+  AgentRecordedToolCall,
+  AgentRunInput,
+  AgentToolCall,
+  AgentToolDefinition,
+  AgentToolName,
+  AgentToolResult,
+  AgentTurnRecord,
+  AgentTurnRecordInput,
+} from "./agent.js";
+export {
   agentOperationSchema,
   executeIntent,
   intentEnvelopeSchema,

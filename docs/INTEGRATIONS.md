@@ -17,9 +17,11 @@ Pin an exact version in applications and production deployments.
 
 | Integration | File | Command |
 | --- | --- | --- |
+| Embedded agent middleware | `examples/integrations/agent-middleware.ts` | `npm run example:agent` |
 | Local TypeScript library | `examples/integrations/local-library.ts` | `npm run example:library` |
 | MCP client | `examples/integrations/mcp-client.ts` | `npm run example:mcp` |
 | Authenticated production HTTP | `examples/integrations/production-http.ts` | `npm run example:production-http` |
+| Production HTTP agent middleware | `examples/integrations/production-agent-middleware.ts` | `npm run example:production-agent` |
 | Production retail workflow | `examples/integrations/production-retail.ts` | `npm run example:production-retail` |
 | Flagship SRE scenario | `examples/integrations/sre-scenario.ts` | `npm run example:sre` |
 | Embedding provider | `examples/integrations/embedding-provider.ts` | `npm run example:embedding` |
@@ -74,6 +76,30 @@ const result = executeIntent(kernel, {
 ```
 
 The SQLite profile is intended for local and single-process use.
+
+## Agent middleware
+
+The embedded middleware example demonstrates the full host lifecycle:
+
+1. bind a principal and begin an agent run;
+2. expose framework-neutral JSON Schema tools;
+3. compile bounded knowledge and resolution context;
+4. execute model-style tool calls through Agent Intent;
+5. store approved turn input, output, tool results, and receipt references.
+
+```powershell
+npm run example:agent
+```
+
+The production HTTP adapter uses the same lifecycle while binding the API key
+outside model-visible arguments:
+
+```powershell
+npm run example:production-agent
+```
+
+See [Agent Middleware](AGENT_MIDDLEWARE.md) for the complete architecture,
+security boundaries, and model-provider mapping.
 
 ## MCP client
 

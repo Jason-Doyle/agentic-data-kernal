@@ -143,12 +143,12 @@ stale or inconsistent published evidence.
 | Application-authored tables | 8 | 0 |
 | Total operated tables | 8 | 18 |
 | Median database footprint | 540,672 bytes | 1,572,864 bytes |
-| Informational median runtime | 63.45 ms | 970.05 ms |
+| Informational median runtime | 52.02 ms | 865.57 ms |
 
 The result is deliberately not presented as a universal win:
 
 - PostgreSQL matches the kernel on correctness.
-- The smaller adapter reuses 930 lines of shipped scenario code and a 14,973
+- The smaller adapter reuses 930 lines of shipped scenario code and a 16,424
   line dependency. It is not an equal from-scratch implementation comparison.
 - The kernel operates more tables, uses more storage, and takes substantially
   longer in this deterministic smoke run.
@@ -244,6 +244,30 @@ reconciliation, load, and explain commands rather than a general envelope
 execution command.
 
 See the [API Reference](docs/API.md).
+
+### Agent middleware
+
+Agentic Data Kernel can be used as lifecycle middleware between an agent host
+and its model. The host receives bounded durable context and JSON Schema tools;
+model tool calls are translated into identity-bound Agent Intent operations,
+and approved turns can be recorded as durable artifacts that are encrypted by
+the production profile.
+
+```ts
+const session = createEmbeddedAgentMiddleware(kernel, principal).beginRun({
+  runId: "run:incident-1001",
+});
+
+const { context, tools } = await session.prepareModelInput({
+  query: "why is checkout failing?",
+  workflow: { instanceId: "incident:1001" },
+});
+```
+
+Production agents can bind an authenticated `ProductionKernel` principal or
+use the remote HTTP adapter. Direct MCP remains available when the model host
+already owns context assembly and turn lifecycle. See
+[Agent Middleware](docs/AGENT_MIDDLEWARE.md).
 
 ## When it fits
 

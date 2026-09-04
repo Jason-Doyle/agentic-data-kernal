@@ -59,6 +59,7 @@ import {
   SecureHttpEffectTransport,
   type EffectTransport,
 } from "../production/effects.js";
+import { createProductionAgentMiddleware } from "../production/agent.js";
 import {
   resolveClientAddress,
   startProductionHttpServer,
@@ -1329,6 +1330,35 @@ test(
         text: "product weight",
       });
       assert.equal(search[0]?.assertion.assertionId, "assertion:weight");
+      const agentSession = createProductionAgentMiddleware(
+        kernel,
+        principalA,
+      ).beginRun({
+        runId: "run:production-agent",
+        taskId: "task:production-agent",
+      });
+      const agentContext = await agentSession.compileContext({
+        query: "product weight",
+        resolutions: [
+          {
+            subjectEntityId: "product:1",
+            predicate: "packaged_weight",
+            policy: "latest",
+          },
+        ],
+      });
+      assert.deepEqual(
+        agentContext.sections.map((section) => section.type),
+        ["search", "resolution"],
+      );
+      const recordedAgentTurn = await agentSession.recordTurn({
+        turnId: "turn-1",
+        input: { message: "What is the packaged weight?" },
+        output: { message: "The current value is 4.8 kg." },
+      });
+      assert.ok(
+        recordedAgentTurn.artifactId.startsWith("agent-turn:"),
+      );
 
       await execute(kernel, principalA, "generic-decision", {
         op: "assert",

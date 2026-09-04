@@ -8,6 +8,14 @@ export {
   revokeApiKey,
 } from "./auth.js";
 export {
+  AgentDataHttpError,
+  createProductionAgentMiddleware,
+  createProductionHttpAgentMiddleware,
+} from "./agent.js";
+export type {
+  ProductionHttpAgentMiddlewareConfig,
+} from "./agent.js";
+export {
   assertRuntimeRoleSafe,
   bootstrapRuntimeRole,
 } from "./bootstrap.js";
