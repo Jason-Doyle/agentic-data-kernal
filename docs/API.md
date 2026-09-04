@@ -12,6 +12,31 @@
 | HTTP | PostgreSQL | `POST /v1/execute` |
 | MCP | Development | `agentic-data-kernel mcp` |
 | MCP | PostgreSQL | `agentic-data-prod mcp` |
+| Agent middleware | Development | `createEmbeddedAgentMiddleware` |
+| Agent middleware | PostgreSQL in-process | `createProductionAgentMiddleware` |
+| Agent middleware | PostgreSQL HTTP | `createProductionHttpAgentMiddleware` |
+
+## Agent middleware
+
+The framework-neutral middleware binds a host-supplied principal, compiles
+bounded durable context, returns model-facing JSON Schema tools, translates
+tool calls into Agent Intent 1.0 envelopes, and records approved turns as
+immutable artifacts.
+
+Core lifecycle:
+
+```text
+create middleware
+  -> beginRun
+  -> prepareModelInput
+  -> model invocation owned by host
+  -> invokeTool
+  -> recordTurn
+```
+
+The model never supplies tenant, principal, purpose, or API-key fields. See
+[Agent Middleware](AGENT_MIDDLEWARE.md) for embedded, in-process production,
+remote HTTP, and direct MCP integration patterns.
 
 ## Intent envelope
 

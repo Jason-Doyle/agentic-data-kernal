@@ -89,10 +89,12 @@
     "release:check": "npm run check && npm test && npm run test:package && npm run test:backup-manifest",
     "deployment:check": "pwsh -NoProfile -File scripts/validate-deployments.ps1",
     "example": "node --no-warnings dist/cli.js example --db .data/example.db",
-    "example:all": "npm run example && npm run example:library && npm run example:mcp",
+    "example:all": "npm run example && npm run example:library && npm run example:agent && npm run example:mcp",
+    "example:agent": "node --no-warnings dist/examples/agent-middleware.js",
     "example:library": "node --no-warnings dist/examples/local-library.js",
     "example:mcp": "node --no-warnings dist/examples/mcp-client.js",
     "example:production-http": "node dist/examples/production-http.js",
+    "example:production-agent": "node dist/examples/production-agent-middleware.js",
     "example:production-retail": "node dist/examples/production-retail.js",
     "example:sre": "node --env-file=.env dist/examples/sre-scenario.js",
     "example:embedding": "node dist/examples/embedding-provider.js",
@@ -121,6 +123,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "ajv": "^8.20.0",
     "semver": "^7.8.5",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"

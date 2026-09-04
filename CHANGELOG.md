@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added framework-neutral agent middleware with bounded context compilation,
+  model-facing JSON Schema tools, identity-bound Agent Intent dispatch,
+  durable turn recording, and embedded, in-process production, and HTTP
+  adapters.
+
 ## 1.0.0
 
 - Declared Agent Intent 1.0 and the documented TypeScript, HTTP, MCP, CLI,

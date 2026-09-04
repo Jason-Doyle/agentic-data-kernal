@@ -35,11 +35,17 @@ try {
   for (const requiredPath of [
     "dist/index.js",
     "dist/index.d.ts",
+    "dist/agent.js",
+    "dist/agent.d.ts",
     "dist/production/index.js",
     "dist/production/index.d.ts",
+    "dist/production/agent.js",
+    "dist/production/agent.d.ts",
     "dist/production/bootstrap.js",
     "dist/production/bootstrap.d.ts",
     "dist/examples/sre-scenario.js",
+    "dist/examples/agent-middleware.js",
+    "dist/examples/production-agent-middleware.js",
     "migrations/postgres/001_core.sql",
     "migrations/postgres/002_embedding_space.sql",
     "migrations/postgres/003_generic_agency.sql",
@@ -52,6 +58,7 @@ try {
     "deploy/kubernetes/helm/agentic-data-kernel/Chart.yaml",
     "scripts/validate-deployments.ps1",
     "scripts/backup-common.ps1",
+    "docs/AGENT_MIDDLEWARE.md",
     "README.md",
     "LICENSE",
   ]) {
@@ -111,15 +118,20 @@ try {
   writeFileSync(
     smokeModule,
     `import {
+      AgentDataMiddleware,
   AgenticKernel,
       KNOWLEDGE_OPERATION_NAMES,
       KnowledgeLayer,
       PACKAGE_VERSION,
       SqliteStore,
+      createEmbeddedAgentMiddleware,
       formatTraceExplanation,
     } from "agentic-data-kernel";
 import {
+  AgentDataHttpError,
   bootstrapRuntimeRole,
+  createProductionAgentMiddleware,
+  createProductionHttpAgentMiddleware,
   OpenAiCompatibleEmbeddingProvider,
   postgresMigrationDirectory,
 } from "agentic-data-kernel/production";
@@ -140,6 +152,29 @@ try {
   }
   if (typeof formatTraceExplanation !== "function") {
     throw new Error("Trace formatter export is unavailable");
+  }
+  const middleware = createEmbeddedAgentMiddleware(kernel, {
+    tenantId: "package-smoke",
+    principalId: "package-smoke",
+    purpose: "test",
+  });
+  if (!(middleware instanceof AgentDataMiddleware)) {
+    throw new Error("Agent middleware export is unavailable");
+  }
+  const session = middleware.beginRun({ runId: "package-smoke" });
+  if (
+    !session
+      .modelTools()
+      .some((tool) => tool.name === "execute_operation")
+  ) {
+    throw new Error("Agent middleware model tools are unavailable");
+  }
+  if (
+    typeof createProductionAgentMiddleware !== "function" ||
+    typeof createProductionHttpAgentMiddleware !== "function" ||
+    typeof AgentDataHttpError !== "function"
+  ) {
+    throw new Error("Production agent middleware exports are unavailable");
   }
   if (
     !(kernel.knowledge instanceof KnowledgeLayer) ||
@@ -171,6 +206,9 @@ try {
   writeFileSync(
     typeSmokeModule,
     `import {
+      type AgentContextBundle,
+      type AgentDataMiddlewareConfig,
+      type AgentDataSession,
   AgenticKernel,
       type AgentIntentVersion,
       type KnowledgeOperationName,
@@ -180,6 +218,7 @@ try {
       formatTraceExplanation,
     } from "agentic-data-kernel";
 import {
+  type ProductionHttpAgentMiddlewareConfig,
   bootstrapRuntimeRole,
   type EmbeddingSpace,
   ProductionDatabase,
@@ -201,6 +240,10 @@ const embeddingSpace: EmbeddingSpace = {
   version: "1",
   dimensions: 768,
 };
+const middlewareConfig: AgentDataMiddlewareConfig | null = null;
+const contextBundle: AgentContextBundle | null = null;
+const agentSession: AgentDataSession | null = null;
+const httpMiddlewareConfig: ProductionHttpAgentMiddlewareConfig | null = null;
 void kernel;
 void knowledgeLayer;
 void knowledgeOperation;
@@ -211,6 +254,10 @@ void databaseType;
 void bootstrapType;
 void migrationPath;
 void embeddingSpace;
+void middlewareConfig;
+void contextBundle;
+void agentSession;
+void httpMiddlewareConfig;
 store.close();
 `,
   );

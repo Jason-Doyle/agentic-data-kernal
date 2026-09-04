@@ -245,6 +245,30 @@ execution command.
 
 See the [API Reference](docs/API.md).
 
+### Agent middleware
+
+Agentic Data Kernel can be used as lifecycle middleware between an agent host
+and its model. The host receives bounded durable context and JSON Schema tools;
+model tool calls are translated into identity-bound Agent Intent operations,
+and approved turns can be recorded as durable artifacts that are encrypted by
+the production profile.
+
+```ts
+const session = createEmbeddedAgentMiddleware(kernel, principal).beginRun({
+  runId: "run:incident-1001",
+});
+
+const { context, tools } = await session.prepareModelInput({
+  query: "why is checkout failing?",
+  workflow: { instanceId: "incident:1001" },
+});
+```
+
+Production agents can bind an authenticated `ProductionKernel` principal or
+use the remote HTTP adapter. Direct MCP remains available when the model host
+already owns context assembly and turn lifecycle. See
+[Agent Middleware](docs/AGENT_MIDDLEWARE.md).
+
 ## When it fits
 
 Use Agentic Data Kernel when several of these are true:
