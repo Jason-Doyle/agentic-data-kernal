@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.0
+
 - Added framework-neutral agent middleware with bounded context compilation,
   model-facing JSON Schema tools, identity-bound Agent Intent dispatch,
   durable turn recording, and embedded, in-process production, and HTTP

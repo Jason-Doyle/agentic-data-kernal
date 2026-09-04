@@ -143,7 +143,7 @@ stale or inconsistent published evidence.
 | Application-authored tables | 8 | 0 |
 | Total operated tables | 8 | 18 |
 | Median database footprint | 540,672 bytes | 1,572,864 bytes |
-| Informational median runtime | 52.02 ms | 865.57 ms |
+| Informational median runtime | 50.75 ms | 898.69 ms |
 
 The result is deliberately not presented as a universal win:
 
@@ -288,11 +288,11 @@ matter more than durable agency semantics.
 
 ## Install and run
 
-The current stable release is `1.0.0`. Pin an exact version in production.
+The current stable release is `1.1.0`. Pin an exact version in production.
 
 ```powershell
-npm install agentic-data-kernel@1.0.0
-npx --yes agentic-data-kernel@1.0.0 example --db .data\example.db
+npm install agentic-data-kernel@1.1.0
+npx --yes agentic-data-kernel@1.1.0 example --db .data\example.db
 ```
 
 Package entry points and commands:
@@ -335,7 +335,7 @@ Replace every placeholder in `.env` with the generated values, database
 passwords, and embedding-provider configuration before continuing:
 
 ```powershell
-$env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:1.0.0"
+$env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:1.1.0"
 docker compose --profile server pull
 docker compose --profile server up --no-build
 ```
@@ -390,7 +390,7 @@ lineage                verification
 
 ## Stable support and boundaries
 
-- Version 1.0.0 supports the bounded production profile documented in
+- Version 1.x supports the bounded production profile documented in
   [Stability and Compatibility](docs/STABILITY.md).
 - Production targets one PostgreSQL primary.
 - The default rate limiter is process-local.
