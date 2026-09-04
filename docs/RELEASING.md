@@ -95,7 +95,8 @@ workflow.
 
 4. Merge the release pull request to `main`.
 5. Confirm CI and CodeQL pass on the merge commit.
-6. Create and push an annotated tag:
+6. Confirm the repository has no open Dependabot alerts.
+7. Create and push an annotated tag:
 
    ```powershell
    git switch main
