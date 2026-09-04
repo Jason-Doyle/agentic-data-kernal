@@ -7,9 +7,18 @@ import {
   type EmbeddingSpace,
 } from "./embeddings.js";
 
+const optionalEnvironmentValue = z.preprocess(
+  (value) =>
+    typeof value === "string" && value.trim() === ""
+      ? undefined
+      : value,
+  z.string().min(1).optional(),
+);
+
 const baseSchema = z.object({
   DATABASE_URL: z.string().url(),
   DATABASE_SSL: z.enum(["disable", "require"]).default("disable"),
+  DATABASE_CA_CERT_BASE64: optionalEnvironmentValue,
   DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(20),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce
     .number()
@@ -97,6 +106,7 @@ const serverSchema = baseSchema.extend({
 export interface DatabaseConfig {
   databaseUrl: string;
   databaseSsl: boolean;
+  databaseCaCertificate?: string;
   databasePoolSize: number;
   statementTimeoutMs: number;
 }
@@ -141,9 +151,13 @@ export function loadDatabaseConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): DatabaseConfig {
   const parsed = parse(baseSchema, environment);
+  const databaseCaCertificate = parseDatabaseCaCertificate(
+    parsed.DATABASE_CA_CERT_BASE64,
+  );
   return {
     databaseUrl: parsed.DATABASE_URL,
     databaseSsl: parsed.DATABASE_SSL === "require",
+    ...(databaseCaCertificate ? { databaseCaCertificate } : {}),
     databasePoolSize: parsed.DATABASE_POOL_SIZE,
     statementTimeoutMs: parsed.DATABASE_STATEMENT_TIMEOUT_MS,
   };
@@ -191,10 +205,14 @@ export function loadProductionConfig(
       .map((host) => host.trim().toLowerCase())
       .filter(Boolean),
   );
+  const databaseCaCertificate = parseDatabaseCaCertificate(
+    parsed.DATABASE_CA_CERT_BASE64,
+  );
 
   return {
     databaseUrl: parsed.DATABASE_URL,
     databaseSsl: parsed.DATABASE_SSL === "require",
+    ...(databaseCaCertificate ? { databaseCaCertificate } : {}),
     databasePoolSize: parsed.DATABASE_POOL_SIZE,
     statementTimeoutMs: parsed.DATABASE_STATEMENT_TIMEOUT_MS,
     authPepper: parsed.AUTH_PEPPER,
@@ -219,6 +237,24 @@ export function loadProductionConfig(
     maxBodyBytes: parsed.MAX_BODY_BYTES,
     rateLimitPerMinute: parsed.RATE_LIMIT_PER_MINUTE,
   };
+}
+
+function parseDatabaseCaCertificate(
+  encoded: string | undefined,
+): string | undefined {
+  if (!encoded) {
+    return undefined;
+  }
+  const certificate = Buffer.from(encoded, "base64").toString("utf8");
+  if (
+    !certificate.includes("-----BEGIN CERTIFICATE-----") ||
+    !certificate.includes("-----END CERTIFICATE-----")
+  ) {
+    throw new Error(
+      "DATABASE_CA_CERT_BASE64 must decode to a PEM certificate bundle",
+    );
+  }
+  return certificate;
 }
 
 export function configuredEmbeddingSpace(

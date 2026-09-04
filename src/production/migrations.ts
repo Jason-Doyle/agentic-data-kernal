@@ -71,12 +71,62 @@ export async function migratePostgres(
         );
         newlyApplied.push(file);
       }
+      await reconcileRuntimeRolePrivileges(client);
       return newlyApplied;
     });
     await configureEmbeddingSpace(database, targetSpace);
     return applied;
   } finally {
     await database.close();
+  }
+
+  async function reconcileRuntimeRolePrivileges(
+    client: PoolClient,
+  ): Promise<void> {
+    const role = await client.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM pg_roles WHERE rolname = 'agentic_app'
+       ) AS exists`,
+    );
+    if (role.rows[0]?.exists !== true) {
+      return;
+    }
+    await client.query(
+      `DO $grant$
+       BEGIN
+         EXECUTE format(
+           'GRANT CONNECT ON DATABASE %I TO agentic_app',
+           current_database()
+         );
+       END
+       $grant$;
+       GRANT USAGE ON SCHEMA agentic, agentic_auth TO agentic_app;
+       GRANT SELECT, INSERT, UPDATE, DELETE
+         ON ALL TABLES IN SCHEMA agentic, agentic_auth
+         TO agentic_app;
+       GRANT USAGE, SELECT
+         ON ALL SEQUENCES IN SCHEMA agentic, agentic_auth
+         TO agentic_app;
+       GRANT EXECUTE
+         ON ALL FUNCTIONS IN SCHEMA agentic
+         TO agentic_app;
+       ALTER DEFAULT PRIVILEGES IN SCHEMA agentic
+         GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO agentic_app;
+       ALTER DEFAULT PRIVILEGES IN SCHEMA agentic_auth
+         GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO agentic_app;
+       ALTER DEFAULT PRIVILEGES IN SCHEMA agentic
+         GRANT USAGE, SELECT ON SEQUENCES TO agentic_app;
+       ALTER DEFAULT PRIVILEGES IN SCHEMA agentic_auth
+         GRANT USAGE, SELECT ON SEQUENCES TO agentic_app;
+       ALTER DEFAULT PRIVILEGES IN SCHEMA agentic
+         GRANT EXECUTE ON FUNCTIONS TO agentic_app;
+       REVOKE INSERT, UPDATE, DELETE, TRUNCATE
+         ON agentic.embedding_configuration
+         FROM agentic_app;
+       GRANT SELECT
+         ON agentic.embedding_configuration
+         TO agentic_app`,
+    );
   }
 }
 

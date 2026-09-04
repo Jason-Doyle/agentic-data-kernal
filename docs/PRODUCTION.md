@@ -63,6 +63,12 @@ Generate local secrets:
 Copy `.env.example` to `.env`, replace every placeholder, and configure an
 OpenAI-compatible embeddings endpoint.
 
+For managed PostgreSQL, set `DATABASE_SSL=require`. If the provider CA is not
+already in the container's trust store, set `DATABASE_CA_CERT_BASE64` to the
+base64 encoding of its PEM CA bundle.
+Do not add SSL query parameters such as `sslmode` to `DATABASE_URL` or
+`MIGRATION_DATABASE_URL`; use these dedicated settings.
+
 The `prod:*` npm scripts load `.env` through Node's `--env-file` option.
 
 Start PostgreSQL and create the restricted role:
@@ -71,6 +77,22 @@ Start PostgreSQL and create the restricted role:
 docker compose up -d postgres
 docker compose run --rm bootstrap
 ```
+
+Cloud and Kubernetes deployments use the equivalent packaged command:
+
+```powershell
+node dist\production\cli.js bootstrap-role
+```
+
+From a source checkout, `npm run prod:bootstrap` runs the same command with
+`.env`.
+
+It reads `MIGRATION_DATABASE_URL` and `APP_DATABASE_PASSWORD`, then creates or
+repairs the fixed `agentic_app` role with no superuser, database-creation,
+role-creation, inheritance, or RLS-bypass privileges.
+The password must contain 16 to 256 printable ASCII characters without spaces.
+Existing `agentic_app` role memberships or object ownership cause bootstrap to
+fail rather than preserve privilege-bearing state.
 
 Apply migrations with the administrative connection:
 
@@ -118,6 +140,20 @@ Or run them directly:
 npm run prod:serve
 npm run prod:worker
 ```
+
+## Cloud deployment templates
+
+Validated reference workload templates are available for:
+
+- Kubernetes through Helm;
+- Azure Container Apps through Bicep;
+- AWS ECS Fargate through OpenTofu;
+- Google Kubernetes Engine through OpenTofu and Helm.
+
+They consume existing private PostgreSQL, secret-management, network, TLS, and
+shared-filesystem resources rather than placing credentials in infrastructure
+state. Read [Deployment Templates](../deploy/README.md) and the shared
+[Deployment Contract](../deploy/CONTRACT.md).
 
 ## HTTP authentication
 

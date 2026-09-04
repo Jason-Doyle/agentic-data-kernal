@@ -1,0 +1,160 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentic-data-kernel.fullname" . }}-worker
+  labels:
+    {{- include "agentic-data-kernel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "agentic-data-kernel.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include "agentic-data-kernel.configChecksum" . }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "agentic-data-kernel.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: {{ include "agentic-data-kernel.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      {{- if or .Values.databaseProxy.enabled .Values.artifactInit.enabled }}
+      initContainers:
+        {{- if .Values.databaseProxy.enabled }}
+        - name: database-proxy
+          restartPolicy: Always
+          image: {{ .Values.databaseProxy.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args:
+            {{- toYaml .Values.databaseProxy.args | nindent 12 }}
+          ports:
+            - name: database-proxy
+              containerPort: {{ .Values.databaseProxy.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.databaseProxy.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+        - name: database-proxy-ready
+          image: {{ .Values.databaseProxy.waitImage | quote }}
+          command:
+            - sh
+            - -ec
+            - for attempt in $(seq 1 60); do nc -z 127.0.0.1 {{ .Values.databaseProxy.port }} && exit 0; sleep 2; done; exit 1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+        {{- end }}
+        {{- if .Values.artifactInit.enabled }}
+        - name: artifact-permissions
+          image: {{ .Values.artifactInit.image | quote }}
+          command:
+            - sh
+            - -ec
+            - mkdir -p /artifacts && chown 10001:10001 /artifacts && chmod 700 /artifacts
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER", "DAC_OVERRIDE"]
+          volumeMounts:
+            - name: artifacts
+              mountPath: /artifacts
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "agentic-data-kernel.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - node
+            - dist/production/cli.js
+            - worker
+          envFrom:
+            - configMapRef:
+                name: {{ include "agentic-data-kernel.fullname" . }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRef.runtimeName }}
+                  key: DATABASE_URL
+            - name: AUTH_PEPPER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRef.runtimeName }}
+                  key: AUTH_PEPPER
+            - name: ARTIFACT_KEYRING
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRef.runtimeName }}
+                  key: ARTIFACT_KEYRING
+            - name: EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRef.runtimeName }}
+                  key: EMBEDDING_API_KEY
+            - name: DATABASE_CA_CERT_BASE64
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRef.runtimeName }}
+                  key: DATABASE_CA_CERT_BASE64
+                  optional: true
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: artifacts
+              mountPath: {{ .Values.config.artifactDirectory }}
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: {{ include "agentic-data-kernel.pvcName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

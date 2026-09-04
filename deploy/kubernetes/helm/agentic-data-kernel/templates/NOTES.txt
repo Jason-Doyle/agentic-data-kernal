@@ -1,0 +1,19 @@
+Agentic Data Kernel has been installed.
+
+Runtime Secret: {{ .Values.secretRef.runtimeName }}
+  DATABASE_URL
+  AUTH_PEPPER
+  ARTIFACT_KEYRING
+  EMBEDDING_API_KEY
+  DATABASE_CA_CERT_BASE64 (optional)
+
+Administrative Secret: {{ .Values.secretRef.adminName }}
+  MIGRATION_DATABASE_URL
+  APP_DATABASE_PASSWORD
+  DATABASE_CA_CERT_BASE64 (optional)
+
+API service:
+  {{ include "agentic-data-kernel.fullname" . }}:{{ .Values.service.port }}
+
+The bootstrap and migration jobs run as pre-install and pre-upgrade hooks.
+Verify both jobs completed before exposing the API.

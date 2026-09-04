@@ -1,0 +1,26 @@
+# Copy this file, then uncomment and replace every example before deployment.
+# aws_region              = "us-east-2"
+# name_prefix             = "agentic-data"
+# image                   = "ghcr.io/jason-doyle/agentic-data-kernel:0.3.0-alpha.5"
+# ecs_cluster_arn         = "arn:aws:ecs:..."
+# private_subnet_ids      = ["subnet-...", "subnet-..."]
+# task_security_group_ids = ["sg-..."]
+# target_group_arn        = "arn:aws:elasticloadbalancing:..."
+# efs_file_system_id      = "fs-..."
+# efs_access_point_id     = "fsap-..."
+# execution_role_arn      = "arn:aws:iam::...:role/..."
+# task_role_arn           = "arn:aws:iam::...:role/..."
+# embedding_base_url      = "https://api.openai.com/v1"
+# artifact_current_key_id = "v1"
+# effect_allowed_hosts    = "payments.example.com,deployments.example.com"
+# services_enabled        = false
+#
+# secret_arns = {
+#   database_url           = "arn:aws:secretsmanager:..."
+#   migration_database_url = "arn:aws:secretsmanager:..."
+#   app_database_password  = "arn:aws:secretsmanager:..."
+#   database_ca_cert       = "arn:aws:secretsmanager:..."
+#   auth_pepper            = "arn:aws:secretsmanager:..."
+#   artifact_keyring       = "arn:aws:secretsmanager:..."
+#   embedding_api_key      = "arn:aws:secretsmanager:..."
+# }

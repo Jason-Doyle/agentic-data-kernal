@@ -70,6 +70,8 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/agentic_data
+      DATABASE_SSL: ${DATABASE_SSL:-disable}
+      DATABASE_CA_CERT_BASE64: ${DATABASE_CA_CERT_BASE64:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
       EMBEDDING_VERSION: ${EMBEDDING_VERSION:-openai-compatible-v1}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
@@ -102,6 +104,8 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://agentic_app:${APP_DATABASE_PASSWORD:?APP_DATABASE_PASSWORD is required}@postgres:5432/agentic_data
+      DATABASE_SSL: ${DATABASE_SSL:-disable}
+      DATABASE_CA_CERT_BASE64: ${DATABASE_CA_CERT_BASE64:-}
       AUTH_PEPPER: ${AUTH_PEPPER:-}
       ARTIFACT_KEYRING: ${ARTIFACT_KEYRING:-}
       ARTIFACT_CURRENT_KEY_ID: ${ARTIFACT_CURRENT_KEY_ID:-v1}
@@ -149,6 +153,8 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://agentic_app:${APP_DATABASE_PASSWORD:?APP_DATABASE_PASSWORD is required}@postgres:5432/agentic_data
+      DATABASE_SSL: ${DATABASE_SSL:-disable}
+      DATABASE_CA_CERT_BASE64: ${DATABASE_CA_CERT_BASE64:-}
       AUTH_PEPPER: ${AUTH_PEPPER:-}
       ARTIFACT_KEYRING: ${ARTIFACT_KEYRING:-}
       ARTIFACT_CURRENT_KEY_ID: ${ARTIFACT_CURRENT_KEY_ID:-v1}

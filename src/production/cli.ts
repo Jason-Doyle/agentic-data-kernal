@@ -5,6 +5,7 @@ import {
   createApiKey,
   revokeApiKey,
 } from "./auth.js";
+import { bootstrapRuntimeRole } from "./bootstrap.js";
 import {
   formatTraceExplanation,
   normalizeTraceDepth,
@@ -37,6 +38,14 @@ import { createProductionRuntime } from "./runtime.js";
 async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
   switch (command) {
+    case "bootstrap-role": {
+      const result = await bootstrapRuntimeRole(
+        loadMigrationDatabaseConfig(),
+        requiredEnvironment("APP_DATABASE_PASSWORD", 16),
+      );
+      print(result);
+      return;
+    }
     case "migrate": {
       const embeddingSpace = loadEmbeddingSpaceConfig();
       const applied = await migratePostgres(
@@ -324,6 +333,7 @@ function print(value: unknown): void {
 const helpText = `Agentic Data Kernel production profile
 
 Commands:
+  bootstrap-role
   migrate
   migration-status
   create-key --tenant ID --principal ID [--tenant-name NAME]

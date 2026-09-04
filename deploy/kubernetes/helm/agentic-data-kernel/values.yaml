@@ -1,0 +1,129 @@
+image:
+  repository: ghcr.io/jason-doyle/agentic-data-kernel
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: false
+
+secretRef:
+  runtimeName: agentic-data-runtime
+  adminName: agentic-data-admin
+
+config:
+  databaseSsl: require
+  databasePoolSize: "10"
+  databaseStatementTimeoutMs: "30000"
+  artifactCurrentKeyId: v1
+  artifactDirectory: /var/lib/agentic-data/artifacts
+  embeddingBaseUrl: https://api.openai.com/v1
+  embeddingModel: text-embedding-3-small
+  embeddingVersion: openai-compatible-v1
+  embeddingDimensions: "1536"
+  embeddingTimeoutMs: "30000"
+  searchCandidateLimit: "200"
+  hnswEfSearch: "100"
+  hnswMaxScanTuples: "20000"
+  effectAllowedHosts: ""
+  effectTimeoutMs: "15000"
+  effectLeaseSeconds: "30"
+  effectMaxAttempts: "10"
+  logLevel: info
+  maxBodyBytes: "1000000"
+  rateLimitPerMinute: "600"
+
+api:
+  replicaCount: 1
+  podAnnotations: {}
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+worker:
+  replicaCount: 1
+  podAnnotations: {}
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+jobs:
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  serviceAccountName: default
+  automountServiceAccountToken: false
+
+databaseProxy:
+  enabled: false
+  image: ""
+  waitImage: busybox:1.37.0
+  args: []
+  port: 5432
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessModes:
+    - ReadWriteMany
+  size: 10Gi
+  annotations: {}
+
+artifactInit:
+  enabled: false
+  image: busybox:1.37.0
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  tlsOnlyAnnotation: ""
+  tlsOnlyValue: ""
+  hosts:
+    - host: agentic-data.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+networkPolicy:
+  enabled: false
+  ingressFrom: []
+  egress: []

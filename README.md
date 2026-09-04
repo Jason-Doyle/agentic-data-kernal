@@ -322,6 +322,22 @@ agent-facing data model, invariants, and interfaces. See
 [Production Profile](docs/PRODUCTION.md) and
 [Threat Model](docs/THREAT_MODEL.md).
 
+### Cloud deployment templates
+
+The package includes validated reference workloads for:
+
+| Platform | Template |
+| --- | --- |
+| Kubernetes | Helm |
+| Azure Container Apps | Bicep |
+| AWS ECS Fargate | OpenTofu |
+| Google Kubernetes Engine | OpenTofu plus Helm |
+
+The templates require existing private PostgreSQL, secret stores, network
+controls, TLS, and shared filesystems. They intentionally do not place
+generated credentials in Bicep parameters or OpenTofu state. See
+[Deployment Templates](deploy/README.md).
+
 ## Architecture
 
 ```text
