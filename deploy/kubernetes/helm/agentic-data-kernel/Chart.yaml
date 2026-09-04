@@ -2,5 +2,5 @@ apiVersion: v2
 name: agentic-data-kernel
 description: Agent-first persistence API and effect worker
 type: application
-version: 0.1.0
-appVersion: "0.3.0-alpha.5"
+version: 1.0.0
+appVersion: "1.0.0"
