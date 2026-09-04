@@ -2,9 +2,9 @@
 
 Generated from `summary.json`.
 
-Source revision: `35d010cf263bbaf60a3c1d9f70af8daa9cd51b18`
+Source revision: `6163d2bc1f9a86a6947b30cd59523e3b0fb14246`
 
-Source hash: `d4b468552af75056e88deb65104f535d0e60c4b5b0b8a1333e6e3a9458fc1f95`
+Source hash: `8ee99637371fc2d2492fcd107c03e72c0fb4d5b028a75dcc55496008dfcbd757`
 
 ## Correctness
 
@@ -44,8 +44,8 @@ operated, or upgraded.
 
 | Variant | Median milliseconds |
 | --- | ---: |
-| Conventional PostgreSQL | 99.08 |
-| Agentic Data Kernel | 1132.31 |
+| Conventional PostgreSQL | 105.72 |
+| Agentic Data Kernel | 1164.60 |
 
 Runtime is not a headline metric. The variants perform different work and this
 deterministic smoke benchmark is not a latency study.
