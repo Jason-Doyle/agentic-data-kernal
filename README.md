@@ -143,7 +143,7 @@ stale or inconsistent published evidence.
 | Application-authored tables | 8 | 0 |
 | Total operated tables | 8 | 18 |
 | Median database footprint | 540,672 bytes | 1,572,864 bytes |
-| Informational median runtime | 68.48 ms | 893.78 ms |
+| Informational median runtime | 52.52 ms | 894.92 ms |
 
 The result is deliberately not presented as a universal win:
 
