@@ -143,12 +143,12 @@ stale or inconsistent published evidence.
 | Application-authored tables | 8 | 0 |
 | Total operated tables | 8 | 18 |
 | Median database footprint | 540,672 bytes | 1,572,864 bytes |
-| Informational median runtime | 58.12 ms | 876.17 ms |
+| Informational median runtime | 68.48 ms | 893.78 ms |
 
 The result is deliberately not presented as a universal win:
 
 - PostgreSQL matches the kernel on correctness.
-- The smaller adapter reuses 929 lines of shipped scenario code and a 13,750
+- The smaller adapter reuses 930 lines of shipped scenario code and a 14,962
   line dependency. It is not an equal from-scratch implementation comparison.
 - The kernel operates more tables, uses more storage, and takes substantially
   longer in this deterministic smoke run.
