@@ -35,7 +35,10 @@ jobs:
       - uses: docker/setup-buildx-action@v4
       - name: Use supported npm
         run: npm install --global npm@12.0.2
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
+      - name: Audit runtime dependencies
+        timeout-minutes: 5
+        run: npm audit --omit=dev --audit-level=moderate
       - name: Validate release tag
         run: |
           git fetch origin main:refs/remotes/origin/main
