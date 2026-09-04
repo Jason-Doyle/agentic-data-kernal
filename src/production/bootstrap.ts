@@ -275,6 +275,51 @@ export async function bootstrapRuntimeRole(
   }
 }
 
+export async function assertRuntimeRoleSafe(
+  database: ProductionDatabase,
+): Promise<void> {
+  const result = await database.query<{ safe: boolean }>(
+    `SELECT (
+       runtime_role.rolname = 'agentic_app'
+       AND runtime_role.rolcanlogin
+       AND NOT runtime_role.rolsuper
+       AND NOT runtime_role.rolcreatedb
+       AND NOT runtime_role.rolcreaterole
+       AND NOT runtime_role.rolinherit
+       AND NOT runtime_role.rolreplication
+       AND NOT runtime_role.rolbypassrls
+       AND NOT EXISTS (
+         SELECT 1
+         FROM pg_auth_members membership
+         WHERE membership.member = runtime_role.oid
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM pg_auth_members membership
+         WHERE membership.roleid = runtime_role.oid
+           AND (
+             membership.inherit_option
+             OR membership.set_option
+             OR NOT membership.admin_option
+           )
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM pg_shdepend dependency
+         WHERE dependency.refobjid = runtime_role.oid
+           AND dependency.deptype = 'o'
+       )
+     ) AS safe
+     FROM pg_roles runtime_role
+     WHERE runtime_role.rolname = current_user`,
+  );
+  if (result.rows[0]?.safe !== true) {
+    throw new Error(
+      "Production runtime requires the restricted agentic_app database role",
+    );
+  }
+}
+
 function createScramVerifier(password: string): string {
   const salt = randomBytes(16);
   const saltedPassword = pbkdf2Sync(

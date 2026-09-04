@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
+import {
+  spawn,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import type { AddressInfo } from "node:net";
 import type { PeerCertificate } from "node:tls";
 import { tmpdir } from "node:os";
@@ -20,12 +30,16 @@ import {
   revokeApiKey,
   type AuthenticatedPrincipal,
 } from "../production/auth.js";
-import { bootstrapRuntimeRole } from "../production/bootstrap.js";
+import {
+  assertRuntimeRoleSafe,
+  bootstrapRuntimeRole,
+} from "../production/bootstrap.js";
 import { reconcileArtifactFiles } from "../production/artifact-reconciliation.js";
 import {
   configuredEmbeddingSpace,
   loadDatabaseConfig,
   loadEmbeddingSpaceConfig,
+  loadProductionConfig,
   type ProductionConfig,
 } from "../production/config.js";
 import { ProductionDatabase } from "../production/database.js";
@@ -45,17 +59,22 @@ import {
   SecureHttpEffectTransport,
   type EffectTransport,
 } from "../production/effects.js";
-import { startProductionHttpServer } from "../production/http.js";
+import {
+  resolveClientAddress,
+  startProductionHttpServer,
+} from "../production/http.js";
 import { ProductionKernel } from "../production/kernel.js";
 import { createLogger } from "../production/logger.js";
 import { MetricsRegistry } from "../production/metrics.js";
 import {
+  assertMigrationsApplied,
   migratePostgres,
   postgresMigrationDirectory,
 } from "../production/migrations.js";
 import { createProductionMcpServer } from "../production/mcp.js";
 import { EncryptedArtifactStore } from "../production/artifacts.js";
 import { buildHybridSearchQuery } from "../production/search.js";
+import { startWorkerMonitor } from "../production/worker-monitor.js";
 
 const databaseUrl = process.env.PRODUCTION_TEST_DATABASE_URL;
 const migrationDatabaseUrl =
@@ -103,6 +122,31 @@ test(
       assert.equal(identity.rows[0]?.role_name, "agentic_app");
     } finally {
       await appClient.end();
+    }
+    const runtimeDatabase = new ProductionDatabase({
+      databaseUrl: appUrl.toString(),
+      databaseSsl: false,
+      databasePoolSize: 2,
+      statementTimeoutMs: 30_000,
+    });
+    try {
+      await assertRuntimeRoleSafe(runtimeDatabase);
+    } finally {
+      await runtimeDatabase.close();
+    }
+    const administrativeDatabase = new ProductionDatabase({
+      databaseUrl: migrationDatabaseUrl,
+      databaseSsl: false,
+      databasePoolSize: 2,
+      statementTimeoutMs: 30_000,
+    });
+    try {
+      await assert.rejects(
+        () => assertRuntimeRoleSafe(administrativeDatabase),
+        /restricted agentic_app/,
+      );
+    } finally {
+      await administrativeDatabase.close();
     }
     const client = new PgClient({ connectionString: migrationDatabaseUrl });
     await client.connect();
@@ -276,6 +320,7 @@ test("database TLS accepts an explicit base64 PEM trust bundle", async () => {
   assert.deepEqual(
     loadDatabaseConfig({
       DATABASE_URL: "postgresql://example:password@database.example/test",
+      DATABASE_SSL: "disable",
       DATABASE_CA_CERT_BASE64: "",
     }),
     {
@@ -347,6 +392,7 @@ test("database TLS accepts an explicit base64 PEM trust bundle", async () => {
     databasePoolSize: 1,
     statementTimeoutMs: 30_000,
   });
+
   try {
     const ssl = database.pool.options.ssl;
     assert.ok(
@@ -367,6 +413,148 @@ test("database TLS accepts an explicit base64 PEM trust bundle", async () => {
     await database.close();
   }
 });
+
+test("effect leases outlive transport timeouts", () => {
+    const environment = {
+      DATABASE_URL:
+        "postgresql://example:password@database.example/test",
+      DATABASE_SSL: "disable",
+      AUTH_PEPPER: "a".repeat(32),
+      ARTIFACT_KEYRING: JSON.stringify({
+        v1: Buffer.alloc(32, 1).toString("base64"),
+      }),
+      ARTIFACT_CURRENT_KEY_ID: "v1",
+      EMBEDDING_BASE_URL: "https://embeddings.example.com/v1",
+      EMBEDDING_API_KEY: "test-key",
+      EFFECT_TIMEOUT_MS: "15000",
+      EFFECT_LEASE_SECONDS: "19",
+    };
+    assert.throws(
+      () => loadProductionConfig(environment),
+      /must exceed EFFECT_TIMEOUT_MS/,
+    );
+    assert.equal(
+      loadProductionConfig({
+        ...environment,
+        EFFECT_LEASE_SECONDS: "20",
+      }).effectLeaseSeconds,
+      20,
+    );
+  });
+
+  test("metrics render Prometheus histograms and gauges", () => {
+    const metrics = new MetricsRegistry();
+    metrics.set("agentic_worker_last_poll_timestamp_seconds", 123);
+    metrics.observe("agentic_effect_duration_ms", 10, {
+      status: "succeeded",
+    });
+
+    for (let index = 0; index < 10_000; index += 1) {
+      metrics.observe("agentic_effect_duration_ms", 5, {
+        status: "succeeded",
+      });
+    }
+    const rendered = metrics.render();
+    assert.match(
+      rendered,
+      /agentic_worker_last_poll_timestamp_seconds 123/,
+    );
+    assert.match(
+      rendered,
+      /agentic_effect_duration_ms_bucket\{le="10",status="succeeded"\} 10001/,
+    );
+    assert.match(
+      rendered,
+      /agentic_effect_duration_ms_count\{status="succeeded"\} 10001/,
+    );
+  });
+
+test("trusted proxy address selection counts hops from the right", () => {
+  assert.equal(
+    resolveClientAddress(
+      "127.0.0.1",
+      "198.51.100.10, 192.0.2.20",
+      0,
+    ),
+    "127.0.0.1",
+  );
+  assert.equal(
+    resolveClientAddress(
+      "127.0.0.1",
+      "198.51.100.10, 192.0.2.20",
+      1,
+    ),
+    "192.0.2.20",
+  );
+  assert.equal(
+    resolveClientAddress(
+      "127.0.0.1",
+      "198.51.100.10, invalid, 192.0.2.20",
+      2,
+    ),
+    "198.51.100.10",
+  );
+  assert.equal(
+    resolveClientAddress("127.0.0.1", "198.51.100.10", 2),
+    "127.0.0.1",
+  );
+});
+
+  test(
+    "worker monitor exposes private health and metrics endpoints",
+    { skip: !databaseUrl },
+    async () => {
+      assert.ok(databaseUrl);
+      const database = new ProductionDatabase({
+        databaseUrl,
+        databaseSsl: false,
+        databasePoolSize: 2,
+        statementTimeoutMs: 30_000,
+      });
+      const metrics = new MetricsRegistry();
+      metrics.set("agentic_worker_last_poll_timestamp_seconds", 123);
+      const server = await startWorkerMonitor(
+        {
+          workerMonitorHost: "127.0.0.1",
+          workerMonitorPort: 0,
+        },
+        database,
+        metrics,
+      );
+      const address = server.address() as AddressInfo;
+      let databaseClosed = false;
+      try {
+        const live = await fetch(
+          `http://127.0.0.1:${address.port}/health/live`,
+        );
+        assert.equal(live.status, 200);
+        const ready = await fetch(
+          `http://127.0.0.1:${address.port}/health/ready`,
+        );
+        assert.equal(ready.status, 200);
+        const metricResponse = await fetch(
+          `http://127.0.0.1:${address.port}/metrics`,
+        );
+        assert.match(
+          await metricResponse.text(),
+          /agentic_worker_last_poll_timestamp_seconds 123/,
+        );
+        await database.close();
+        databaseClosed = true;
+        const unavailable = await fetch(
+          `http://127.0.0.1:${address.port}/health/ready`,
+        );
+        assert.equal(unavailable.status, 503);
+      } finally {
+        await new Promise<void>((resolve) =>
+          server.close(() => resolve()),
+        );
+        if (!databaseClosed) {
+          await database.close();
+        }
+      }
+    },
+  );
 
 test(
   "runtime role bootstrap rejects inherited role capabilities",
@@ -526,6 +714,37 @@ test(
         `DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`,
       );
       await control.end();
+    }
+  },
+);
+
+test(
+  "runtime rejects a newer PostgreSQL migration set",
+  { skip: !migrationDatabaseUrl },
+  async () => {
+    assert.ok(migrationDatabaseUrl);
+    const database = new ProductionDatabase({
+      databaseUrl: migrationDatabaseUrl,
+      databaseSsl: false,
+      databasePoolSize: 2,
+      statementTimeoutMs: 30_000,
+    });
+    try {
+      await database.query(
+        `INSERT INTO agentic.schema_migrations (
+           version, file_name, checksum, applied_at
+         ) VALUES ('999', '999_future.sql', $1, clock_timestamp())`,
+        ["f".repeat(64)],
+      );
+      await assert.rejects(
+        () => assertMigrationsApplied(database),
+        /newer than, or incompatible/,
+      );
+    } finally {
+      await database.query(
+        "DELETE FROM agentic.schema_migrations WHERE version = '999'",
+      );
+      await database.close();
     }
   },
 );
@@ -950,6 +1169,7 @@ test(
             0,
           );
           assert.equal(reconciled.removed.length, 1);
+          assert.equal(reconciled.verified, 1);
           assert.equal(listFiles(artifactDirectory).length, 1);
         } finally {
           await administrator.close();
@@ -997,6 +1217,61 @@ test(
           sourceArtifactId: "artifact:secret",
         },
       });
+      await execute(kernel, principalB, "assert-b", {
+        op: "assert",
+        assertion: {
+          assertionId: "assertion:weight",
+          subjectEntityId: "product:1",
+          predicate: "packaged_weight",
+          object: { type: "number", value: 99, unit: "kg" },
+          kind: "reported_fact",
+        },
+      });
+      if (migrationDatabaseUrl) {
+        const administrativeDatabase = new ProductionDatabase(
+          testConfig(migrationDatabaseUrl, artifactDirectory),
+        );
+        const administrativeKernel = new ProductionKernel(
+          administrativeDatabase,
+          artifactStore,
+          embeddings,
+          config,
+          metrics,
+          logger,
+        );
+        try {
+          const administrativeResolution =
+            await administrativeKernel.resolveReadOnly(principalA, {
+              op: "resolve",
+              subjectEntityId: "product:1",
+              predicate: "packaged_weight",
+              policy: "latest",
+            });
+          assert.equal(
+            administrativeResolution.selected?.tenantId,
+            principalA.tenantId,
+          );
+          assert.ok(
+            administrativeResolution.candidates.every(
+              (assertion) =>
+                assertion.tenantId === principalA.tenantId,
+            ),
+          );
+          const administrativeSearch =
+            await administrativeKernel.searchReadOnly(principalA, {
+              op: "search",
+              text: "product weight",
+              predicate: "packaged_weight",
+            });
+          assert.ok(
+            administrativeSearch.every(
+              (hit) => hit.assertion.tenantId === principalA.tenantId,
+            ),
+          );
+        } finally {
+          await administrativeDatabase.close();
+        }
+      }
       const replayKernel = new ProductionKernel(
         database,
         artifactStore,
@@ -1006,7 +1281,7 @@ test(
         logger,
       );
       const replayedAssertion = await replayKernel.execute(principalA, {
-        protocolVersion: "0.1",
+        protocolVersion: "1.0",
         requestId: "assert-replay-during-provider-outage",
         idempotencyKey: "assert-a",
         principal: {
@@ -1464,6 +1739,119 @@ test(
           reconcilingEffectId,
       );
       assert.equal(field(reconciledEffect, "status"), "succeeded");
+      const crashEffectResult = await execute(
+        kernel,
+        principalA,
+        "generic-crash-effect",
+        {
+          op: "request_effect",
+          instanceId: "incident:generic",
+          expectedRevision: 2,
+          effectName: "rollback_api_crash",
+          effectType: "deployment.rollback",
+          target: "https://payments.example.com/rollback",
+          statusUrl: "https://payments.example.com/status/rollback_crash",
+          request: { deployment: "api-v44" },
+          idempotencyKey: "rollback-api-v44",
+          decisionAssertionId: "assertion:generic-decision",
+          policyAssertionId: "assertion:generic-policy",
+        },
+      );
+      const crashEffectId = field(
+        crashEffectResult.result,
+        "effectId",
+      );
+      let crashDeliveries = 0;
+      let crashReconciliations = 0;
+      let providerApplied = false;
+      const crashWorker = new EffectWorker(
+        database,
+        {
+          deliver: async () => {
+            crashDeliveries += 1;
+            providerApplied = true;
+            throw new Error("simulated process loss after provider apply");
+          },
+          reconcile: async () => {
+            assert.equal(providerApplied, true);
+            crashReconciliations += 1;
+            return {
+              status: "succeeded",
+              responseStatus: 200,
+              outcome: { providerReference: "rollback-44" },
+            };
+          },
+        },
+        { effectLeaseSeconds: 0, effectMaxAttempts: 3 },
+        metrics,
+        logger,
+      );
+      await assert.rejects(
+        () =>
+          crashWorker.runOnce({
+            tenantId: principalA.tenantId,
+            effectId: crashEffectId,
+          }),
+        /simulated process loss/,
+      );
+      assert.equal(
+        await crashWorker.runOnce({
+          tenantId: principalA.tenantId,
+          effectId: crashEffectId,
+        }),
+        true,
+      );
+      assert.equal(crashDeliveries, 1);
+      assert.equal(crashReconciliations, 1);
+      const crashEffects = await execute(
+        kernel,
+        principalA,
+        "generic-crash-effects",
+        {
+          op: "list_effects",
+          instanceId: "incident:generic",
+        },
+      );
+      assert.equal(
+        field(
+          findArrayItemByField(
+            crashEffects.result,
+            "effectId",
+            crashEffectId,
+          ),
+          "status",
+        ),
+        "succeeded",
+      );
+      const firstEffectPage = await execute(
+        kernel,
+        principalA,
+        "generic-effects-page-1",
+        {
+          op: "list_effects",
+          instanceId: "incident:generic",
+          limit: 1,
+        },
+      );
+      const firstEffectId = field(
+        arrayItem(firstEffectPage.result, 0),
+        "effectId",
+      );
+      const secondEffectPage = await execute(
+        kernel,
+        principalA,
+        "generic-effects-page-2",
+        {
+          op: "list_effects",
+          instanceId: "incident:generic",
+          afterEffectId: firstEffectId,
+          limit: 1,
+        },
+      );
+      assert.notEqual(
+        field(arrayItem(secondEffectPage.result, 0), "effectId"),
+        firstEffectId,
+      );
       const reconciledBudget = await database.query<{
           reserved: string;
           spent: string;
@@ -1506,8 +1894,8 @@ test(
             effectType: "deployment.rollback",
             target: "https://payments.example.com/rollback",
             statusUrl: "https://payments.example.com/status/rollback_cancelled",
-            request: { deployment: "api-v44" },
-            idempotencyKey: "rollback-api-v44",
+            request: { deployment: "api-v45" },
+            idempotencyKey: "rollback-api-v45-cancelled",
             decisionAssertionId: "assertion:generic-decision",
             policyAssertionId: "assertion:generic-policy",
             budgetAmount: "5",
@@ -1754,6 +2142,158 @@ test(
         "confirmed",
       );
 
+      if (migrationDatabaseUrl) {
+        await execute(kernel, principalA, "artifact-integrity-missing", {
+          op: "put_artifact",
+          artifact: {
+            artifactId: "artifact:integrity-missing",
+            mediaType: "text/plain",
+            content: "integrity test",
+            sourceIdentity: "integrity-test",
+          },
+        });
+        const descriptor = await database.withTenantTransaction(
+          principalA,
+          (client) =>
+            client.query<{ storage_key: string }>(
+              `SELECT storage_key
+               FROM agentic.artifacts
+               WHERE artifact_id = 'artifact:integrity-missing'`,
+            ),
+        );
+        const storageKey = descriptor.rows[0]?.storage_key;
+        assert.ok(storageKey);
+        rmSync(
+          join(artifactDirectory, ...storageKey.split("/")),
+          { force: true },
+        );
+        const administrator = new ProductionDatabase(
+          testConfig(migrationDatabaseUrl, artifactDirectory),
+        );
+        try {
+          await assert.rejects(
+            () =>
+              reconcileArtifactFiles(
+                administrator,
+                artifactStore,
+                0,
+              ),
+            /failed integrity verification/,
+          );
+        } finally {
+          await administrator.close();
+        }
+        await database.withTenantTransaction(principalA, (client) =>
+          client.query(
+            `DELETE FROM agentic.artifacts
+             WHERE artifact_id = 'artifact:integrity-missing'`,
+          ),
+        );
+
+        await execute(kernel, principalA, "artifact-integrity-corrupt", {
+          op: "put_artifact",
+          artifact: {
+            artifactId: "artifact:integrity-corrupt",
+            mediaType: "text/plain",
+            content: "corruption test",
+            sourceIdentity: "integrity-test",
+          },
+        });
+        const corruptDescriptor = await database.withTenantTransaction(
+          principalA,
+          (client) =>
+            client.query<{ storage_key: string }>(
+              `SELECT storage_key
+               FROM agentic.artifacts
+               WHERE artifact_id = 'artifact:integrity-corrupt'`,
+            ),
+        );
+        const corruptStorageKey =
+          corruptDescriptor.rows[0]?.storage_key;
+        assert.ok(corruptStorageKey);
+        writeFileSync(
+          join(artifactDirectory, ...corruptStorageKey.split("/")),
+          "corrupt",
+        );
+        const corruptAdministrator = new ProductionDatabase(
+          testConfig(migrationDatabaseUrl, artifactDirectory),
+        );
+        try {
+          await assert.rejects(
+            () =>
+              reconcileArtifactFiles(
+                corruptAdministrator,
+                artifactStore,
+                0,
+              ),
+            /failed integrity verification/,
+          );
+        } finally {
+          await corruptAdministrator.close();
+        }
+        await database.withTenantTransaction(principalA, (client) =>
+          client.query(
+            `DELETE FROM agentic.artifacts
+             WHERE artifact_id = 'artifact:integrity-corrupt'`,
+          ),
+        );
+        rmSync(
+          join(artifactDirectory, ...corruptStorageKey.split("/")),
+          { force: true },
+        );
+
+        await execute(kernel, principalA, "artifact-integrity-key", {
+          op: "put_artifact",
+          artifact: {
+            artifactId: "artifact:integrity-key",
+            mediaType: "text/plain",
+            content: "key availability test",
+            sourceIdentity: "integrity-test",
+          },
+        });
+        const keyDescriptor = await database.withTenantTransaction(
+          principalA,
+          (client) =>
+            client.query<{ storage_key: string }>(
+              `SELECT storage_key
+               FROM agentic.artifacts
+               WHERE artifact_id = 'artifact:integrity-key'`,
+            ),
+        );
+        const keyStorageKey = keyDescriptor.rows[0]?.storage_key;
+        assert.ok(keyStorageKey);
+        const unavailableKeyStore = new EncryptedArtifactStore(
+          artifactDirectory,
+          {
+            currentKeyId: "v2",
+            keys: new Map([["v2", Buffer.alloc(32, 8)]]),
+          },
+        );
+        const keyAdministrator = new ProductionDatabase(
+          testConfig(migrationDatabaseUrl, artifactDirectory),
+        );
+        try {
+          await assert.rejects(
+            () =>
+              reconcileArtifactFiles(
+                keyAdministrator,
+                unavailableKeyStore,
+                0,
+              ),
+            /failed integrity verification/,
+          );
+        } finally {
+          await keyAdministrator.close();
+        }
+        await database.withTenantTransaction(principalA, (client) =>
+          client.query(
+            `DELETE FROM agentic.artifacts
+             WHERE artifact_id = 'artifact:integrity-key'`,
+          ),
+        );
+        await artifactStore.removeIfPresent(keyStorageKey);
+      }
+
       await assert.rejects(
         () =>
           execute(kernel, principalA, "future-timer", {
@@ -1764,7 +2304,7 @@ test(
       );
 
       await testAuthenticatedHttp(config, database, kernel, metrics, logger, keyA.token, principalA);
-      await testProductionMcp(kernel, principalA);
+      await testProductionMcp(database, kernel, principalA);
     } finally {
       await cleanupTenant(database, principalA);
       await cleanupTenant(database, principalB);
@@ -2208,6 +2748,7 @@ test(
       );
 
       const query = buildHybridSearchQuery({
+        tenantId: principal.tenantId,
         ...configuredEmbeddingSpace(config),
         embedding: vector(1, 768),
         operation: {
@@ -2278,6 +2819,747 @@ test(
   },
 );
 
+test(
+  "production timer processing is bounded to one locked batch",
+  { skip: !databaseUrl },
+  async () => {
+    assert.ok(databaseUrl);
+    const artifactDirectory = mkdtempSync(
+      join(tmpdir(), "agentic-data-timer-batch-"),
+    );
+    const config = testConfig(databaseUrl, artifactDirectory);
+    const database = new ProductionDatabase(config);
+    const kernel = new ProductionKernel(
+      database,
+      new EncryptedArtifactStore(
+        artifactDirectory,
+        config.artifactKeyring,
+      ),
+      new TestEmbeddingProvider(),
+      config,
+      new MetricsRegistry(),
+      createLogger(config),
+    );
+    const tenantId = `timer-batch-${randomUUID()}`;
+    const key = await createApiKey(database, config, {
+      tenantId,
+      tenantName: "Timer Batch",
+      principalId: "timer-agent",
+      scopes: ["data:read", "workflows:run"],
+      purposes: ["test"],
+      effectBudgetCurrency: "USD",
+      effectBudgetLimit: "0",
+    });
+    const principal = await authenticateToken(
+      database,
+      config,
+      key.token,
+      "test",
+    );
+    try {
+      await database.withTenantWriteTransaction(
+        principal,
+        async (client) => {
+          await client.query(
+            `INSERT INTO agentic.inventory (
+               tenant_id, sku, location, quantity_on_hand,
+               quantity_reserved, version
+             ) VALUES ($1, 'timer-sku', 'timer-location', 101, 101, 1)`,
+            [tenantId],
+          );
+          await client.query(
+            `INSERT INTO agentic.machine_instances (
+               tenant_id, instance_id, machine_type, state, data_json,
+               revision, terminal, updated_at
+             )
+             SELECT
+               $1,
+               'order:timer-' || sequence,
+               'retail_order',
+               'reserved',
+               jsonb_build_object(
+                 'orderId', 'timer-' || sequence,
+                 'sku', 'timer-sku',
+                 'location', 'timer-location',
+                 'quantity', 1,
+                 'reservationExpiresAt', '2025-01-01T00:00:00.000Z'
+               ),
+               1,
+               FALSE,
+               agentic.next_system_time()
+             FROM generate_series(1, 101) AS series(sequence)`,
+            [tenantId],
+          );
+          await client.query(
+            `INSERT INTO agentic.machine_history (
+               tenant_id, instance_id, revision, event_id, transition_name,
+               prior_state, new_state, data_json, created_at
+             )
+             SELECT
+               tenant_id,
+               instance_id,
+               1,
+               'event:' || instance_id,
+               'reserve_inventory',
+               'new',
+               'reserved',
+               data_json,
+               created_at
+             FROM agentic.machine_instances
+             WHERE tenant_id = $1`,
+            [tenantId],
+          );
+          await client.query(
+            `INSERT INTO agentic.timers (
+               tenant_id, timer_id, instance_id, originating_revision,
+               timer_name, due_at, status, updated_at
+             )
+             SELECT
+               tenant_id,
+               'timer:' || instance_id,
+               instance_id,
+               1,
+               'reservation_expiry',
+               clock_timestamp() - INTERVAL '1 minute',
+               'pending',
+               agentic.next_system_time()
+             FROM agentic.machine_instances
+             WHERE tenant_id = $1`,
+            [tenantId],
+          );
+        },
+      );
+      const result = await execute(kernel, principal, "timer-batch", {
+        op: "process_timers",
+      });
+      assert.ok(Array.isArray(result.result));
+      assert.equal(result.result.length, 100);
+      const remaining = await database.withTenantTransaction(
+        principal,
+        (client) =>
+          client.query<{
+            pending: string;
+            reserved: number;
+          }>(
+            `SELECT
+               (
+                 SELECT count(*)::TEXT
+                 FROM agentic.timers
+                 WHERE tenant_id = $1 AND status = 'pending'
+               ) AS pending,
+               (
+                 SELECT quantity_reserved
+                 FROM agentic.inventory
+                 WHERE tenant_id = $1
+                   AND sku = 'timer-sku'
+                   AND location = 'timer-location'
+               ) AS reserved`,
+            [tenantId],
+          ),
+      );
+      assert.deepEqual(remaining.rows[0], {
+        pending: "1",
+        reserved: 1,
+      });
+    } finally {
+      await cleanupTenant(database, principal);
+      await database.withSystemTransaction(async (client) => {
+        await client.query(
+          "DELETE FROM agentic_auth.api_keys WHERE tenant_id = $1",
+          [tenantId],
+        );
+        await client.query(
+          "DELETE FROM agentic_auth.tenants WHERE tenant_id = $1",
+          [tenantId],
+        );
+      });
+      await database.close();
+      rmSync(artifactDirectory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "effect workers rotate fairly across active tenants",
+  { skip: !databaseUrl },
+  async () => {
+    assert.ok(databaseUrl);
+    const artifactDirectory = mkdtempSync(
+      join(tmpdir(), "agentic-data-worker-fairness-"),
+    );
+    const config = testConfig(databaseUrl, artifactDirectory);
+    const database = new ProductionDatabase(config);
+    const metrics = new MetricsRegistry();
+    const logger = createLogger(config);
+    const kernel = new ProductionKernel(
+      database,
+      new EncryptedArtifactStore(
+        artifactDirectory,
+        config.artifactKeyring,
+      ),
+      new TestEmbeddingProvider(),
+      config,
+      metrics,
+      logger,
+    );
+    const suffix = randomUUID();
+    const tenantA = `00-fair-a-${suffix}`;
+    const tenantB = `01-fair-b-${suffix}`;
+    const principals: AuthenticatedPrincipal[] = [];
+    const effectTenants = new Map<string, string>();
+    try {
+      for (const [tenantId, count] of [
+        [tenantA, 2],
+        [tenantB, 1],
+      ] as const) {
+        const key = await createApiKey(database, config, {
+          tenantId,
+          tenantName: tenantId,
+          principalId: "fairness-agent",
+          scopes: [
+            "data:read",
+            "data:write",
+            "effects:write",
+            "workflows:run",
+          ],
+          purposes: ["test"],
+          effectBudgetCurrency: "USD",
+          effectBudgetLimit: "10",
+        });
+        const principal = await authenticateToken(
+          database,
+          config,
+          key.token,
+          "test",
+        );
+        principals.push(principal);
+        await execute(kernel, principal, `${tenantId}-entity`, {
+          op: "put_entity",
+          entity: {
+            entityId: "service:fairness",
+            entityType: "service",
+            canonicalName: "Fairness Service",
+          },
+        });
+        await execute(kernel, principal, `${tenantId}-decision`, {
+          op: "assert",
+          assertion: {
+            assertionId: "assertion:decision",
+            subjectEntityId: "service:fairness",
+            predicate: "perform_test_effect",
+            object: { type: "boolean", value: true },
+            kind: "decision",
+          },
+        });
+        await execute(kernel, principal, `${tenantId}-policy`, {
+          op: "assert",
+          assertion: {
+            assertionId: "assertion:policy",
+            subjectEntityId: "service:fairness",
+            predicate: "test_effect_policy",
+            object: { type: "string", value: "allow" },
+            kind: "directive",
+          },
+        });
+        await execute(kernel, principal, `${tenantId}-workflow`, {
+          op: "create_workflow",
+          instanceId: "incident:fairness",
+          workflowType: "test",
+          initialState: "ready",
+          data: {},
+        });
+        for (let index = 0; index < count; index += 1) {
+          const effect = await execute(
+            kernel,
+            principal,
+            `${tenantId}-effect-${index}`,
+            {
+              op: "request_effect",
+              instanceId: "incident:fairness",
+              expectedRevision: 1,
+              effectName: `fairness_${index}`,
+              effectType: "test.effect",
+              target: "https://payments.example.com/apply",
+              statusUrl: "https://payments.example.com/status",
+              request: { index },
+              idempotencyKey: `${tenantId}-provider-${index}`,
+              decisionAssertionId: "assertion:decision",
+              policyAssertionId: "assertion:policy",
+              budgetAmount: "1",
+              currency: "USD",
+            },
+          );
+          effectTenants.set(
+            field(effect.result, "effectId"),
+            tenantId,
+          );
+        }
+      }
+      const deliveredTenants: string[] = [];
+      const worker = new EffectWorker(
+        database,
+        {
+          deliver: async ({ effectId }) => {
+            const tenantId = effectTenants.get(effectId);
+            assert.ok(tenantId);
+            deliveredTenants.push(tenantId);
+            return {
+              status: "succeeded",
+              responseStatus: 200,
+              outcome: { providerReference: effectId },
+            };
+          },
+          reconcile: async () => ({
+            status: "unknown",
+            responseStatus: 200,
+            outcome: { status: "pending" },
+          }),
+        },
+        config,
+        metrics,
+        logger,
+      );
+      assert.equal(await worker.runOnce(), true);
+      assert.equal(await worker.runOnce(), true);
+      assert.equal(await worker.runOnce(), true);
+      assert.deepEqual(deliveredTenants, [tenantA, tenantB, tenantA]);
+
+      const abortEffect = await execute(
+        kernel,
+        principals[0]!,
+        `${tenantA}-abort-effect`,
+        {
+          op: "request_effect",
+          instanceId: "incident:fairness",
+          expectedRevision: 1,
+          effectName: "abortable_effect",
+          effectType: "test.effect",
+          target: "https://payments.example.com/apply",
+          statusUrl: "https://payments.example.com/status",
+          request: { mode: "abort" },
+          idempotencyKey: `${tenantA}-abort-provider`,
+          decisionAssertionId: "assertion:decision",
+          policyAssertionId: "assertion:policy",
+          budgetAmount: "1",
+          currency: "USD",
+        },
+      );
+      const abortEffectId = field(abortEffect.result, "effectId");
+      let deliveryStartedResolve: (() => void) | undefined;
+      const deliveryStarted = new Promise<void>((resolve) => {
+        deliveryStartedResolve = resolve;
+      });
+      let reconciliationStartedResolve: (() => void) | undefined;
+      const reconciliationStarted = new Promise<void>((resolve) => {
+        reconciliationStartedResolve = resolve;
+      });
+      let abortDeliveries = 0;
+      let abortReconciliations = 0;
+      const abortingWorker = new EffectWorker(
+        database,
+        {
+          deliver: async (_effect, signal) => {
+            abortDeliveries += 1;
+            deliveryStartedResolve?.();
+            await waitForAbort(signal);
+            return {
+              status: "unknown",
+              responseStatus: null,
+              outcome: { reason: "shutdown" },
+            };
+          },
+          reconcile: async (_effect, signal) => {
+            abortReconciliations += 1;
+            reconciliationStartedResolve?.();
+            await waitForAbort(signal);
+            return {
+              status: "unknown",
+              responseStatus: null,
+              outcome: { reason: "shutdown" },
+            };
+          },
+        },
+        { effectLeaseSeconds: 30, effectMaxAttempts: 1 },
+        metrics,
+        logger,
+      );
+      const deliveryController = new AbortController();
+      const deliveryRun = abortingWorker.runOnce(
+        { tenantId: tenantA, effectId: abortEffectId },
+        deliveryController.signal,
+      );
+      await deliveryStarted;
+      deliveryController.abort();
+      assert.equal(await deliveryRun, true);
+      await database.withTenantTransaction(principals[0]!, (client) =>
+        client.query(
+          `UPDATE agentic.effect_intents
+           SET next_attempt_at = clock_timestamp()
+           WHERE effect_id = $1`,
+          [abortEffectId],
+        ),
+      );
+      const reconciliationController = new AbortController();
+      const reconciliationRun = abortingWorker.runOnce(
+        { tenantId: tenantA, effectId: abortEffectId },
+        reconciliationController.signal,
+      );
+      await reconciliationStarted;
+      reconciliationController.abort();
+      assert.equal(await reconciliationRun, true);
+      assert.equal(abortDeliveries, 1);
+      assert.equal(abortReconciliations, 1);
+      await database.withTenantTransaction(principals[0]!, (client) =>
+        client.query(
+          `UPDATE agentic.effect_intents
+           SET next_attempt_at = clock_timestamp()
+           WHERE effect_id = $1`,
+          [abortEffectId],
+        ),
+      );
+      const recoveringWorker = new EffectWorker(
+        database,
+        {
+          deliver: async () => {
+            throw new Error("Reconciliation must not redeliver");
+          },
+          reconcile: async () => {
+            abortReconciliations += 1;
+            return {
+              status: "succeeded",
+              responseStatus: 200,
+              outcome: { providerReference: abortEffectId },
+            };
+          },
+        },
+        { effectLeaseSeconds: 30, effectMaxAttempts: 1 },
+        metrics,
+        logger,
+      );
+      assert.equal(
+        await recoveringWorker.runOnce({
+          tenantId: tenantA,
+          effectId: abortEffectId,
+        }),
+        true,
+      );
+      assert.equal(abortReconciliations, 2);
+      const recovered = await execute(
+        kernel,
+        principals[0]!,
+        `${tenantA}-abort-result`,
+        {
+          op: "list_effects",
+          instanceId: "incident:fairness",
+        },
+      );
+      assert.equal(
+        field(
+          findArrayItemByField(
+            recovered.result,
+            "effectId",
+            abortEffectId,
+          ),
+          "status",
+        ),
+        "succeeded",
+      );
+    } finally {
+      for (const principal of principals) {
+        await cleanupTenant(database, principal);
+      }
+      await database.withSystemTransaction(async (client) => {
+        await client.query(
+          "DELETE FROM agentic_auth.api_keys WHERE tenant_id = ANY($1)",
+          [[tenantA, tenantB]],
+        );
+        await client.query(
+          "DELETE FROM agentic_auth.tenants WHERE tenant_id = ANY($1)",
+          [[tenantA, tenantB]],
+        );
+      });
+      await database.close();
+      rmSync(artifactDirectory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "SIGTERM drains an active production HTTP request",
+  {
+    skip:
+      !databaseUrl ||
+      !migrationDatabaseUrl ||
+      process.platform === "win32",
+  },
+  async () => {
+    assert.ok(databaseUrl);
+    assert.ok(migrationDatabaseUrl);
+    const artifactDirectory = mkdtempSync(
+      join(tmpdir(), "agentic-data-http-shutdown-"),
+    );
+    const config = testConfig(databaseUrl, artifactDirectory);
+    await migratePostgres(
+      testConfig(migrationDatabaseUrl, artifactDirectory),
+      undefined,
+      configuredEmbeddingSpace(config),
+    );
+    const database = new ProductionDatabase(config);
+    const kernel = new ProductionKernel(
+      database,
+      new EncryptedArtifactStore(
+        artifactDirectory,
+        config.artifactKeyring,
+      ),
+      new TestEmbeddingProvider(),
+      config,
+      new MetricsRegistry(),
+      createLogger(config),
+    );
+    const tenantId = `http-shutdown-${randomUUID()}`;
+    const key = await createApiKey(database, config, {
+      tenantId,
+      tenantName: "HTTP Shutdown",
+      principalId: "shutdown-agent",
+      scopes: ["data:read", "data:write"],
+      purposes: ["test"],
+      effectBudgetCurrency: "USD",
+      effectBudgetLimit: "0",
+    });
+    const principal = await authenticateToken(
+      database,
+      config,
+      key.token,
+      "test",
+    );
+    await execute(kernel, principal, "shutdown-entity", {
+      op: "put_entity",
+      entity: {
+        entityId: "service:shutdown",
+        entityType: "service",
+        canonicalName: "Shutdown Service",
+      },
+    });
+
+    let releaseEmbeddingResolve: (() => void) | undefined;
+    const releaseEmbedding = new Promise<void>((resolve) => {
+      releaseEmbeddingResolve = resolve;
+    });
+    let embeddingStartedResolve: (() => void) | undefined;
+    const embeddingStarted = new Promise<void>((resolve) => {
+      embeddingStartedResolve = resolve;
+    });
+    const embeddingServer = createServer(async (request, response) => {
+      for await (const _chunk of request) {
+        // Drain the request before waiting so the client can finish sending.
+      }
+      embeddingStartedResolve?.();
+      await releaseEmbedding;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          data: [{ index: 0, embedding: vector(1) }],
+          model: config.embeddingModel,
+        }),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      embeddingServer.listen(0, "127.0.0.1", resolve),
+    );
+    const embeddingPort =
+      (embeddingServer.address() as AddressInfo).port;
+    const applicationPort = await reservePort();
+    let child: ChildProcessWithoutNullStreams | null = null;
+    try {
+      const spawned = spawn(
+        process.execPath,
+        [join(process.cwd(), "dist", "production", "cli.js"), "serve"],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            DATABASE_URL: databaseUrl,
+            DATABASE_SSL: "disable",
+            AUTH_PEPPER: config.authPepper,
+            ARTIFACT_KEYRING: JSON.stringify({
+              v1: config.artifactKeyring.keys.get("v1")?.toString("base64"),
+            }),
+            ARTIFACT_CURRENT_KEY_ID: "v1",
+            ARTIFACT_DIR: artifactDirectory,
+            EMBEDDING_BASE_URL:
+              `http://127.0.0.1:${embeddingPort}/v1`,
+            EMBEDDING_API_KEY: "test-embedding-key",
+            EMBEDDING_MODEL: config.embeddingModel,
+            EMBEDDING_VERSION: config.embeddingVersion,
+            EMBEDDING_DIMENSIONS: String(config.embeddingDimensions),
+            HOST: "127.0.0.1",
+            PORT: String(applicationPort),
+            LOG_LEVEL: "silent",
+            TRUSTED_PROXY_HOPS: "0",
+            SHUTDOWN_TIMEOUT_MS: "5000",
+          },
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      );
+      child = spawned;
+      spawned.stdin.end();
+      let output = "";
+      spawned.stdout.on("data", (chunk) => {
+        output += chunk.toString();
+      });
+      spawned.stderr.on("data", (chunk) => {
+        output += chunk.toString();
+      });
+      const exit = new Promise<{
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      }>((resolve) => {
+        spawned.once("exit", (code, signal) =>
+          resolve({ code, signal }),
+        );
+      });
+      await waitForEndpoint(
+        `http://127.0.0.1:${applicationPort}/health/live`,
+        spawned,
+        () => output,
+      );
+      const request = fetch(
+        `http://127.0.0.1:${applicationPort}/v1/execute`,
+        {
+          method: "POST",
+          headers: {
+            authorization: ["Bearer", key.token].join(" "),
+            "content-type": "application/json",
+            "x-agent-purpose": "test",
+          },
+          body: JSON.stringify({
+            protocolVersion: "1.0",
+            requestId: `shutdown-request-${randomUUID()}`,
+            principal: {
+              tenantId,
+              principalId: principal.principalId,
+              purpose: "test",
+            },
+            operation: {
+              op: "assert",
+              assertion: {
+                assertionId: "assertion:shutdown",
+                subjectEntityId: "service:shutdown",
+                predicate: "shutdown_test",
+                object: { type: "boolean", value: true },
+                kind: "observation",
+              },
+            },
+          }),
+        },
+      );
+      await withTimeout(embeddingStarted, 10_000, "embedding request");
+      assert.equal(spawned.kill("SIGTERM"), true);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      releaseEmbeddingResolve?.();
+      assert.equal((await request).status, 200);
+      const exited = await withTimeout(exit, 10_000, "server shutdown");
+      assert.deepEqual(exited, { code: 0, signal: null });
+    } finally {
+      releaseEmbeddingResolve?.();
+      if (child?.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      await new Promise<void>((resolve) =>
+        embeddingServer.close(() => resolve()),
+      );
+      await cleanupTenant(database, principal);
+      await database.withSystemTransaction(async (client) => {
+        await client.query(
+          "DELETE FROM agentic_auth.api_keys WHERE tenant_id = $1",
+          [tenantId],
+        );
+        await client.query(
+          "DELETE FROM agentic_auth.tenants WHERE tenant_id = $1",
+          [tenantId],
+        );
+      });
+      await database.close();
+      rmSync(artifactDirectory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "production startup failure closes the database pool",
+  {
+    skip:
+      !migrationDatabaseUrl ||
+      process.platform === "win32",
+  },
+  async () => {
+    assert.ok(migrationDatabaseUrl);
+    const artifactDirectory = mkdtempSync(
+      join(tmpdir(), "agentic-data-startup-failure-"),
+    );
+    const config = testConfig(
+      migrationDatabaseUrl,
+      artifactDirectory,
+    );
+    const child = spawn(
+      process.execPath,
+      [join(process.cwd(), "dist", "production", "cli.js"), "serve"],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          DATABASE_URL: migrationDatabaseUrl,
+          DATABASE_SSL: "disable",
+          AUTH_PEPPER: config.authPepper,
+          ARTIFACT_KEYRING: JSON.stringify({
+            v1: config.artifactKeyring.keys.get("v1")?.toString("base64"),
+          }),
+          ARTIFACT_CURRENT_KEY_ID: "v1",
+          ARTIFACT_DIR: artifactDirectory,
+          EMBEDDING_BASE_URL: "https://embeddings.example.com/v1",
+          EMBEDDING_API_KEY: "test-embedding-key",
+          EMBEDDING_MODEL: config.embeddingModel,
+          EMBEDDING_VERSION: config.embeddingVersion,
+          EMBEDDING_DIMENSIONS: String(config.embeddingDimensions),
+          HOST: "127.0.0.1",
+          PORT: String(await reservePort()),
+          LOG_LEVEL: "silent",
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    child.stdin.end();
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    try {
+      const exited = await withTimeout(
+        new Promise<{
+          code: number | null;
+          signal: NodeJS.Signals | null;
+        }>((resolve) => {
+          child.once("exit", (code, signal) =>
+            resolve({ code, signal }),
+          );
+        }),
+        10_000,
+        "startup failure",
+      );
+      assert.deepEqual(exited, { code: 1, signal: null });
+      assert.match(output, /restricted agentic_app database role/);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      rmSync(artifactDirectory, { recursive: true, force: true });
+    }
+  },
+);
+
 test("OpenAI-compatible embedding provider validates real response shape", async () => {
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, "Bearer test-key");
@@ -2300,6 +3582,50 @@ test("OpenAI-compatible embedding provider validates real response shape", async
         model: "test-model",
       }),
     );
+  });
+
+  await test("embedding provider rejects redirects without forwarding content", async () => {
+    let forwarded = 0;
+    const target = createServer((_request, response) => {
+      forwarded += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+    await new Promise<void>((resolve) =>
+      target.listen(0, "127.0.0.1", resolve),
+    );
+    const targetPort = (target.address() as AddressInfo).port;
+    const redirect = createServer((_request, response) => {
+      response.writeHead(307, {
+        location: `http://127.0.0.1:${targetPort}/embeddings`,
+      });
+      response.end();
+    });
+    await new Promise<void>((resolve) =>
+      redirect.listen(0, "127.0.0.1", resolve),
+    );
+    const redirectPort = (redirect.address() as AddressInfo).port;
+    try {
+      const provider = new OpenAiCompatibleEmbeddingProvider(
+        `http://127.0.0.1:${redirectPort}`,
+        "test-key",
+        "test-model",
+        1536,
+        5_000,
+      );
+      await assert.rejects(
+        () => provider.embed(["sensitive artifact content"]),
+        /redirect|fetch failed/i,
+      );
+      assert.equal(forwarded, 0);
+    } finally {
+      await new Promise<void>((resolve) =>
+        redirect.close(() => resolve()),
+      );
+      await new Promise<void>((resolve) =>
+        target.close(() => resolve()),
+      );
+    }
   });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -2470,6 +3796,10 @@ function testConfig(
     logLevel: "silent",
     maxBodyBytes: 1_000_000,
     rateLimitPerMinute: 1_000,
+    trustedProxyHops: 0,
+    shutdownTimeoutMs: 10_000,
+    workerMonitorHost: "127.0.0.1",
+    workerMonitorPort: 4319,
   };
 }
 
@@ -2480,7 +3810,7 @@ async function execute(
   operation: AgentOperation,
 ) {
   return kernel.execute(principal, {
-    protocolVersion: "0.1",
+    protocolVersion: "1.0",
     requestId: `${key}-${randomUUID()}`,
     idempotencyKey: key,
     principal: {
@@ -2542,6 +3872,76 @@ function findArrayItemByField(
     throw new Error(`Expected array item with ${fieldName}`);
   }
   return match;
+}
+
+function waitForAbort(signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) {
+    throw new Error("Expected an abort signal");
+  }
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
+async function reservePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", resolve),
+  );
+  const port = (server.address() as AddressInfo).port;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
+async function waitForEndpoint(
+  url: string,
+  child: ChildProcessWithoutNullStreams,
+  output: () => string,
+): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `Production server exited before readiness: ${output()}`,
+      );
+    }
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        return;
+      }
+    } catch {
+      // Startup connection failures are expected until the listener is ready.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Production server did not become ready: ${output()}`);
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  description: string,
+): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Timed out waiting for ${description}`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function listFiles(directory: string): string[] {
@@ -2664,6 +4064,7 @@ async function cleanupTenant(
 }
 
 async function testProductionMcp(
+  database: ProductionDatabase,
   kernel: ProductionKernel,
   principal: AuthenticatedPrincipal,
 ): Promise<void> {
@@ -2688,6 +4089,18 @@ async function testProductionMcp(
       arguments: { instanceId: "order:order-1" },
     });
     assert.ok(Array.isArray(result.content));
+    await database.withTenantWriteTransaction(principal, (dbClient) =>
+      revokeApiKey(dbClient, principal.keyId),
+    );
+    const revokedResult = await client.callTool({
+      name: "get_machine",
+      arguments: { instanceId: "order:order-1" },
+    });
+    assert.equal(revokedResult.isError, true);
+    assert.match(
+      JSON.stringify(revokedResult.content),
+      /Invalid or revoked API key/,
+    );
   } finally {
     await client.close();
     await server.close();

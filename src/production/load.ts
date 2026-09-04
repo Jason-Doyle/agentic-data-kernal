@@ -1,3 +1,5 @@
+import { AGENT_INTENT_VERSION } from "../version.js";
+
 export interface LoadOptions {
   baseUrl: string;
   token: string;
@@ -43,7 +45,7 @@ export async function runLoad(options: LoadOptions): Promise<LoadResult> {
             "x-agent-purpose": options.purpose,
           },
           body: JSON.stringify({
-            protocolVersion: "0.1",
+            protocolVersion: AGENT_INTENT_VERSION,
             requestId: `load-${Date.now()}-${index}`,
             principal: {
               tenantId: options.tenantId,

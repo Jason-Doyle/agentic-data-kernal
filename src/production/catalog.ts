@@ -4,6 +4,10 @@ import {
   PRODUCTION_OPERATION_NAMES,
 } from "../layers.js";
 import type { EmbeddingSpace } from "./embeddings.js";
+import {
+  AGENT_INTENT_VERSION,
+  SUPPORTED_AGENT_INTENT_VERSIONS,
+} from "../version.js";
 
 export function productionCatalog(
   embeddingSpace?: EmbeddingSpace,
@@ -13,7 +17,8 @@ export function productionCatalog(
   embeddingSpace?: EmbeddingSpace;
 } {
   return {
-    protocolVersion: "0.1",
+    protocolVersion: AGENT_INTENT_VERSION,
+    supportedProtocolVersions: [...SUPPORTED_AGENT_INTENT_VERSIONS],
     profile: "postgres-production",
     storage: "PostgreSQL 18 with pgvector and forced tenant row-level security",
     operations: [...PRODUCTION_OPERATION_NAMES],
@@ -69,7 +74,7 @@ export function productionCatalog(
       "single PostgreSQL primary",
       "one active embedding space per deployment",
       "indexed vector dimensions are limited to 2000",
-      "one operation per Agent IR v0.1 envelope",
+      "one operation per Agent Intent 1.0 envelope",
       "TLS termination is expected at a trusted reverse proxy",
     ],
     ...(embeddingSpace ? { embeddingSpace } : {}),

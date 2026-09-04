@@ -66,13 +66,13 @@ export interface EffectTransport {
     idempotencyKey: string;
     targetUrl: string;
     request: JsonValue;
-  }): Promise<DeliveryResult>;
+  }, signal?: AbortSignal): Promise<DeliveryResult>;
   reconcile(effect: {
     effectId: string;
     authorizationFence: string;
     idempotencyKey: string;
     statusUrl: string;
-  }): Promise<DeliveryResult>;
+  }, signal?: AbortSignal): Promise<DeliveryResult>;
 }
 
 export interface EffectRunFilter {
@@ -92,7 +92,7 @@ export class SecureHttpEffectTransport implements EffectTransport {
     idempotencyKey: string;
     targetUrl: string;
     request: JsonValue;
-  }): Promise<DeliveryResult> {
+  }, signal?: AbortSignal): Promise<DeliveryResult> {
     try {
       const { response, parsed } = await performPinnedRequest(
         effect.targetUrl,
@@ -108,6 +108,7 @@ export class SecureHttpEffectTransport implements EffectTransport {
           },
           body: JSON.stringify(effect.request),
         },
+        signal,
       );
       if (response.ok) {
         if (!hasProviderReference(parsed)) {
@@ -167,7 +168,7 @@ export class SecureHttpEffectTransport implements EffectTransport {
     authorizationFence: string;
     idempotencyKey: string;
     statusUrl: string;
-  }): Promise<DeliveryResult> {
+  }, signal?: AbortSignal): Promise<DeliveryResult> {
     try {
       const { response, parsed } = await performPinnedRequest(
         effect.statusUrl,
@@ -181,6 +182,7 @@ export class SecureHttpEffectTransport implements EffectTransport {
             "x-agentic-authorization-fence": effect.authorizationFence,
           },
         },
+        signal,
       );
       if (response.ok) {
         const status = providerStatus(parsed);
@@ -246,6 +248,8 @@ export class SecureHttpEffectTransport implements EffectTransport {
 }
 
 export class EffectWorker {
+  private tenantCursor = 0;
+
   public constructor(
     private readonly database: ProductionDatabase,
     private readonly transport: EffectTransport,
@@ -257,7 +261,14 @@ export class EffectWorker {
     private readonly logger: Logger,
   ) {}
 
-  public async runOnce(filter: EffectRunFilter = {}): Promise<boolean> {
+  public async runOnce(
+    filter: EffectRunFilter = {},
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    this.metrics.set(
+      "agentic_worker_last_poll_timestamp_seconds",
+      Date.now() / 1_000,
+    );
     const tenants = filter.tenantId
       ? { rows: [{ tenant_id: filter.tenantId }] }
       : await this.database.query<{ tenant_id: string }>(
@@ -266,7 +277,23 @@ export class EffectWorker {
            WHERE active = TRUE
            ORDER BY tenant_id`,
         );
-    for (const tenant of tenants.rows) {
+    const start =
+      tenants.rows.length === 0
+        ? 0
+        : this.tenantCursor % tenants.rows.length;
+    const orderedTenants = [
+      ...tenants.rows.slice(start),
+      ...tenants.rows.slice(0, start),
+    ];
+    for (
+      let offset = 0;
+      offset < orderedTenants.length;
+      offset += 1
+    ) {
+      const tenant = orderedTenants[offset];
+      if (!tenant) {
+        continue;
+      }
       const effect = await this.leaseNext(
         tenant.tenant_id,
         filter.effectId,
@@ -274,21 +301,29 @@ export class EffectWorker {
       if (!effect) {
         continue;
       }
+      this.tenantCursor =
+        (start + offset + 1) % orderedTenants.length;
       const started = performance.now();
       const delivery = effect.reconciliation_mode
-        ? await this.transport.reconcile({
-            effectId: effect.effect_id,
-            authorizationFence: effect.authorization_fence,
-            idempotencyKey: effect.idempotency_key,
-            statusUrl: effect.status_url,
-          })
-        : await this.transport.deliver({
-            effectId: effect.effect_id,
-            authorizationFence: effect.authorization_fence,
-            idempotencyKey: effect.idempotency_key,
-            targetUrl: effect.target_url,
-            request: effect.request_json,
-          });
+        ? await this.transport.reconcile(
+            {
+              effectId: effect.effect_id,
+              authorizationFence: effect.authorization_fence,
+              idempotencyKey: effect.idempotency_key,
+              statusUrl: effect.status_url,
+            },
+            signal,
+          )
+        : await this.transport.deliver(
+            {
+              effectId: effect.effect_id,
+              authorizationFence: effect.authorization_fence,
+              idempotencyKey: effect.idempotency_key,
+              targetUrl: effect.target_url,
+              request: effect.request_json,
+            },
+            signal,
+          );
       await this.finalize(effect, delivery);
       this.metrics.increment("agentic_effect_attempts_total", {
         status: delivery.status,
@@ -299,14 +334,23 @@ export class EffectWorker {
         performance.now() - started,
         { status: delivery.status },
       );
+      this.metrics.increment("agentic_worker_polls_total", {
+        result: "worked",
+      });
       return true;
     }
+    if (orderedTenants.length > 0) {
+      this.tenantCursor = (start + 1) % orderedTenants.length;
+    }
+    this.metrics.increment("agentic_worker_polls_total", {
+      result: "idle",
+    });
     return false;
   }
 
   public async run(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
-      const worked = await this.runOnce();
+      const worked = await this.runOnce({}, signal);
       if (!worked) {
         await wait(500, signal);
       }
@@ -382,6 +426,7 @@ export class EffectWorker {
         candidate.authorization_fence ?? randomUUID();
       const reconciliationMode =
         candidate.status === "reconciling" ||
+        candidate.status === "dispatching" ||
         candidate.attempt_count >= this.config.effectMaxAttempts;
       const leased = await client.query<LeasedEffect>(
         `UPDATE agentic.effect_intents
@@ -760,6 +805,7 @@ async function performPinnedRequest(
     headers: Record<string, string>;
     body?: string;
   },
+  signal?: AbortSignal,
 ): Promise<{ response: UndiciResponse; parsed: JsonValue }> {
   const target = await validateOutboundUrl(urlValue, allowedHosts);
   const dispatcher = new Agent({
@@ -785,7 +831,9 @@ async function performPinnedRequest(
       headers: request.headers,
       body: request.body,
       redirect: "error",
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs),
       dispatcher,
     });
     const parsed = parseJsonBody(
@@ -956,14 +1004,19 @@ async function insertHistory(
 
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    const timeout = setTimeout(resolve, milliseconds);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timeout);
-        resolve();
-      },
-      { once: true },
-    );
+    const finish = (): void => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timeout = setTimeout(finish, milliseconds);
+    const abort = (): void => {
+      clearTimeout(timeout);
+      finish();
+    };
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    signal.addEventListener("abort", abort, { once: true });
   });
 }

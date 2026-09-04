@@ -51,6 +51,7 @@ try {
     "deploy/gcp/main.tf",
     "deploy/kubernetes/helm/agentic-data-kernel/Chart.yaml",
     "scripts/validate-deployments.ps1",
+    "scripts/backup-common.ps1",
     "README.md",
     "LICENSE",
   ]) {
@@ -60,6 +61,7 @@ try {
   }
   for (const forbiddenPath of [
     ".env",
+    "Dockerfile",
     "scripts/test-package.mjs",
     "src/index.ts",
   ]) {
@@ -112,6 +114,7 @@ try {
   AgenticKernel,
       KNOWLEDGE_OPERATION_NAMES,
       KnowledgeLayer,
+      PACKAGE_VERSION,
       SqliteStore,
       formatTraceExplanation,
     } from "agentic-data-kernel";
@@ -144,6 +147,9 @@ try {
   ) {
     throw new Error("Layered API exports are unavailable");
   }
+  if (PACKAGE_VERSION !== ${JSON.stringify(installedManifest.version)}) {
+    throw new Error("Published runtime version does not match package metadata");
+  }
   if (
     !existsSync(join(postgresMigrationDirectory, "001_core.sql")) ||
     !existsSync(join(postgresMigrationDirectory, "002_embedding_space.sql")) ||
@@ -166,8 +172,10 @@ try {
     typeSmokeModule,
     `import {
   AgenticKernel,
+      type AgentIntentVersion,
       type KnowledgeOperationName,
       KnowledgeLayer,
+      PACKAGE_VERSION,
       SqliteStore,
       formatTraceExplanation,
     } from "agentic-data-kernel";
@@ -182,6 +190,8 @@ const store = new SqliteStore(":memory:");
 const kernel: AgenticKernel = new AgenticKernel(store);
 const knowledgeLayer: KnowledgeLayer = kernel.knowledge;
 const knowledgeOperation: KnowledgeOperationName = "assert";
+const protocolVersion: AgentIntentVersion = "1.0";
+const packageVersion: string = PACKAGE_VERSION;
 const formatter: typeof formatTraceExplanation = formatTraceExplanation;
 const databaseType: typeof ProductionDatabase = ProductionDatabase;
 const bootstrapType: typeof bootstrapRuntimeRole = bootstrapRuntimeRole;
@@ -194,6 +204,8 @@ const embeddingSpace: EmbeddingSpace = {
 void kernel;
 void knowledgeLayer;
 void knowledgeOperation;
+void protocolVersion;
+void packageVersion;
 void formatter;
 void databaseType;
 void bootstrapType;

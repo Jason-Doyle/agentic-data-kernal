@@ -54,8 +54,10 @@ import {
   typedValueText,
 } from "../util.js";
 import type { EncryptedArtifactStore, StoredArtifact } from "./artifacts.js";
+import { assertRuntimeRoleSafe } from "./bootstrap.js";
 import {
   operationScope,
+  revalidatePrincipal as revalidateAuthenticatedPrincipal,
   requireScope,
   type AuthenticatedPrincipal,
 } from "./auth.js";
@@ -268,6 +270,18 @@ export class ProductionKernel {
     return { ...this.activeEmbeddingSpace };
   }
 
+  public async revalidatePrincipal(
+    principal: AuthenticatedPrincipal,
+  ): Promise<AuthenticatedPrincipal> {
+    return this.database.withTenantTransaction(principal, (client) =>
+      revalidateAuthenticatedPrincipal(client, principal),
+    );
+  }
+
+  public async assertRuntimeRoleSafe(): Promise<void> {
+    await assertRuntimeRoleSafe(this.database);
+  }
+
   public async execute(
     principal: AuthenticatedPrincipal,
     input: unknown,
@@ -283,27 +297,45 @@ export class ProductionKernel {
         "Effect outcomes are accepted only from the effect worker",
       );
     }
-    requireScope(principal, operationScope(envelope.operation.op));
+    const activePrincipal = await this.revalidatePrincipal(principal);
+    requireScope(
+      activePrincipal,
+      operationScope(envelope.operation.op),
+    );
 
     const requestHash = sha256(
-      stableStringify({
-        principal: envelope.principal,
-        operation: envelope.operation,
-      }),
+      stableStringify(
+        envelope.protocolVersion === "0.1"
+          ? {
+              principal: envelope.principal,
+              operation: envelope.operation,
+            }
+          : {
+              protocolVersion: envelope.protocolVersion,
+              principal: envelope.principal,
+              operation: envelope.operation,
+            },
+      ),
     );
     const operationKey = envelope.idempotencyKey ?? envelope.requestId;
     const started = performance.now();
     const existing = await this.database.withTenantTransaction(
-      principal,
+      activePrincipal,
       async (client) => {
+        const validatedPrincipal =
+          await revalidateAuthenticatedPrincipal(client, activePrincipal);
+        requireScope(
+          validatedPrincipal,
+          operationScope(envelope.operation.op),
+        );
         await this.lockIdempotency(
           client,
-          principal,
+          validatedPrincipal,
           operationKey,
         );
         return this.getIdempotency(
           client,
-          principal,
+          validatedPrincipal,
           operationKey,
           requestHash,
         );
@@ -319,15 +351,19 @@ export class ProductionKernel {
         performance.now() - started,
         { operation: envelope.operation.op },
       );
-      return { ...existing, idempotentReplay: true };
+      return {
+        ...existing,
+        requestId: envelope.requestId,
+        idempotentReplay: true,
+      };
     }
     const preparedArtifact =
       envelope.operation.op === "put_artifact"
-        ? await this.prepareArtifact(principal, envelope.operation)
+        ? await this.prepareArtifact(activePrincipal, envelope.operation)
         : null;
     const preparedAssertion =
       envelope.operation.op === "assert"
-        ? await this.prepareAssertion(principal, envelope.operation)
+        ? await this.prepareAssertion(activePrincipal, envelope.operation)
         : null;
     let searchEmbedding: number[] | null = null;
     if (envelope.operation.op === "search") {
@@ -345,26 +381,39 @@ export class ProductionKernel {
 
     try {
       const execution = await this.database.withTenantWriteTransaction(
-        principal,
+        activePrincipal,
         async (client) => {
+          const validatedPrincipal =
+            await revalidateAuthenticatedPrincipal(
+              client,
+              activePrincipal,
+            );
+          requireScope(
+            validatedPrincipal,
+            operationScope(envelope.operation.op),
+          );
           await this.lockIdempotency(
             client,
-            principal,
+            validatedPrincipal,
             operationKey,
           );
           const replay = await this.getIdempotency(
             client,
-            principal,
+            validatedPrincipal,
             operationKey,
             requestHash,
           );
           if (replay) {
-            return { ...replay, idempotentReplay: true };
+            return {
+              ...replay,
+              requestId: envelope.requestId,
+              idempotentReplay: true,
+            };
           }
 
           const rawResult = await this.executeOperation(
             client,
-            principal,
+            validatedPrincipal,
             envelope.operation,
             preparedArtifact,
             preparedAssertion,
@@ -374,14 +423,14 @@ export class ProductionKernel {
           const evidenceManifest = operationEvidence(rawResult);
           const receipt = await this.recordReceipt(
             client,
-            principal,
+            validatedPrincipal,
             envelope.requestId,
             envelope.operation.op,
             result,
             evidenceManifest,
           );
           const response: IntentExecutionResult = {
-            protocolVersion: "0.1",
+            protocolVersion: envelope.protocolVersion,
             requestId: envelope.requestId,
             status: "ok",
             operation: envelope.operation.op,
@@ -394,8 +443,8 @@ export class ProductionKernel {
                tenant_id, principal_id, operation_key, request_hash, result_json
              ) VALUES ($1, $2, $3, $4, $5)`,
             [
-              principal.tenantId,
-              principal.principalId,
+              validatedPrincipal.tenantId,
+              validatedPrincipal.principalId,
               operationKey,
               requestHash,
               response,
@@ -431,7 +480,8 @@ export class ProductionKernel {
     principal: AuthenticatedPrincipal,
     operation: Extract<AgentOperation, { op: "search" }>,
   ): Promise<SearchHit[]> {
-    requireScope(principal, "data:read");
+    const activePrincipal = await this.revalidatePrincipal(principal);
+    requireScope(activePrincipal, "data:read");
     const embedding = (await this.embeddings.embed([operation.text]))[0];
     if (!embedding) {
       throw new Error("Embedding provider returned no search vector");
@@ -440,8 +490,21 @@ export class ProductionKernel {
       embedding,
       this.activeEmbeddingSpace.dimensions,
     );
-    return this.database.withTenantTransaction(principal, (client) =>
-      this.search(client, operation, embedding),
+    return this.database.withTenantTransaction(
+      activePrincipal,
+      async (client) => {
+        const active = await revalidateAuthenticatedPrincipal(
+          client,
+          activePrincipal,
+        );
+        requireScope(active, "data:read");
+        return this.search(
+          client,
+          active.tenantId,
+          operation,
+          embedding,
+        );
+      },
     );
   }
 
@@ -449,9 +512,16 @@ export class ProductionKernel {
     principal: AuthenticatedPrincipal,
     operation: Extract<AgentOperation, { op: "resolve" }>,
   ): Promise<ResolutionResult> {
-    requireScope(principal, "data:read");
-    return this.database.withTenantTransaction(principal, (client) =>
-      this.resolve(client, operation),
+    return this.database.withTenantTransaction(
+      principal,
+      async (client) => {
+        const active = await revalidateAuthenticatedPrincipal(
+          client,
+          principal,
+        );
+        requireScope(active, "data:read");
+        return this.resolve(client, active.tenantId, operation);
+      },
     );
   }
 
@@ -460,16 +530,21 @@ export class ProductionKernel {
     target: LineageEndpoint,
     maxDepth = 4,
   ): Promise<TraceExplanation> {
-    requireScope(principal, "data:read");
     return this.database.withTenantTransaction(
       principal,
-      (client) =>
-        this.explainTrace(
+      async (client) => {
+        const active = await revalidateAuthenticatedPrincipal(
           client,
-          principal.tenantId,
+          principal,
+        );
+        requireScope(active, "data:read");
+        return this.explainTrace(
+          client,
+          active.tenantId,
           target,
           maxDepth,
-        ),
+        );
+      },
       "REPEATABLE READ",
     );
   }
@@ -478,9 +553,20 @@ export class ProductionKernel {
     principal: AuthenticatedPrincipal,
     instanceId: string,
   ): Promise<MachineRecord | WorkflowRecord> {
-    requireScope(principal, "data:read");
-    return this.database.withTenantTransaction(principal, (client) =>
-      this.getMachineRecord(client, principal.tenantId, instanceId),
+    return this.database.withTenantTransaction(
+      principal,
+      async (client) => {
+        const active = await revalidateAuthenticatedPrincipal(
+          client,
+          principal,
+        );
+        requireScope(active, "data:read");
+        return this.getMachineRecord(
+          client,
+          active.tenantId,
+          instanceId,
+        );
+      },
     );
   }
 
@@ -642,12 +728,21 @@ export class ProductionKernel {
           preparedAssertion,
         );
       case "resolve":
-        return this.resolve(client, operation);
+        return this.resolve(
+          client,
+          principal.tenantId,
+          operation,
+        );
       case "search":
         if (!searchEmbedding) {
           throw new Error("Search embedding was not prepared");
         }
-        return this.search(client, operation, searchEmbedding);
+        return this.search(
+          client,
+          principal.tenantId,
+          operation,
+          searchEmbedding,
+        );
       case "add_lineage":
         return this.addLineage(client, principal, operation);
       case "explain":
@@ -689,7 +784,7 @@ export class ProductionKernel {
         return this.listEffects(
           client,
           principal.tenantId,
-          operation.instanceId,
+          operation,
         );
       default:
         return assertNever(operation);
@@ -952,6 +1047,7 @@ export class ProductionKernel {
 
   private async resolve(
     client: PoolClient,
+    tenantId: string,
     operation: Extract<AgentOperation, { op: "resolve" }>,
   ): Promise<ResolutionResult> {
     const current = await currentSystemTime(client);
@@ -964,6 +1060,7 @@ export class ProductionKernel {
       "validAt",
     );
     const values: unknown[] = [
+      tenantId,
       operation.subjectEntityId,
       operation.predicate,
       systemAt,
@@ -974,12 +1071,13 @@ export class ProductionKernel {
       : "";
     const result = await client.query<AssertionRow>(
       `SELECT * FROM agentic.assertions
-       WHERE subject_entity_id = $1
-         AND predicate = $2
-         AND system_from <= $3
-         AND (system_to IS NULL OR system_to > $3)
-         AND valid_from <= $4
-         AND (valid_to IS NULL OR valid_to > $4)
+       WHERE tenant_id = $1
+         AND subject_entity_id = $2
+         AND predicate = $3
+         AND system_from <= $4
+         AND (system_to IS NULL OR system_to > $4)
+         AND valid_from <= $5
+         AND (valid_to IS NULL OR valid_to > $5)
          AND status NOT IN ('quarantined', 'deleted')
          ${perspectiveClause}
        ORDER BY authority DESC, system_from DESC`,
@@ -996,6 +1094,7 @@ export class ProductionKernel {
 
   private async search(
     client: PoolClient,
+    tenantId: string,
     operation: Extract<AgentOperation, { op: "search" }>,
     embedding: number[],
   ): Promise<SearchHit[]> {
@@ -1025,6 +1124,7 @@ export class ProductionKernel {
       [String(efSearch), String(this.config.hnswMaxScanTuples)],
     );
     const query = buildHybridSearchQuery({
+      tenantId,
       ...this.activeEmbeddingSpace,
       embedding,
       operation,
@@ -2207,7 +2307,8 @@ export class ProductionKernel {
        FROM agentic.timers
        WHERE tenant_id = $1 AND status = 'pending' AND due_at <= $2
        ORDER BY due_at
-       FOR UPDATE`,
+       LIMIT 100
+       FOR UPDATE SKIP LOCKED`,
       [principal.tenantId, asOf],
     );
     const changed: MachineRecord[] = [];
@@ -2332,21 +2433,51 @@ export class ProductionKernel {
   private async listEffects(
     client: PoolClient,
     tenantId: string,
-    instanceId: string | undefined,
+    operation: Extract<AgentOperation, { op: "list_effects" }>,
   ): Promise<EffectRecord[]> {
-    const result = instanceId
-      ? await client.query<EffectRow>(
-          `SELECT * FROM agentic.effect_intents
-           WHERE tenant_id = $1 AND instance_id = $2
-           ORDER BY created_at`,
-          [tenantId, instanceId],
-        )
-      : await client.query<EffectRow>(
-          `SELECT * FROM agentic.effect_intents
-           WHERE tenant_id = $1
-           ORDER BY created_at`,
-          [tenantId],
+    if (operation.afterEffectId) {
+      const cursorResult = await client.query<{ effect_id: string }>(
+        `SELECT effect_id FROM agentic.effect_intents
+         WHERE tenant_id = $1
+           AND effect_id = $2
+           AND ($3::TEXT IS NULL OR instance_id = $3)`,
+        [
+          tenantId,
+          operation.afterEffectId,
+          operation.instanceId ?? null,
+        ],
+      );
+      if (!cursorResult.rows[0]) {
+        throw new KernelError(
+          "not_found",
+          `Effect cursor ${operation.afterEffectId} was not found`,
         );
+      }
+    }
+    const limit =
+      operation.limit ?? (operation.afterEffectId ? 100 : undefined);
+    const result = await client.query<EffectRow>(
+      `SELECT * FROM agentic.effect_intents
+       WHERE tenant_id = $1
+         AND ($2::TEXT IS NULL OR instance_id = $2)
+         AND (
+           $3::TEXT IS NULL
+           OR (created_at, effect_id) > (
+             SELECT cursor.created_at, cursor.effect_id
+             FROM agentic.effect_intents AS cursor
+             WHERE cursor.tenant_id = $1
+               AND cursor.effect_id = $3
+           )
+         )
+       ORDER BY created_at, effect_id
+       ${limit === undefined ? "" : "LIMIT $4"}`,
+      [
+        tenantId,
+        operation.instanceId ?? null,
+        operation.afterEffectId ?? null,
+        ...(limit === undefined ? [] : [limit]),
+      ],
+    );
     return result.rows.map(mapEffect);
   }
 

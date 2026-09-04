@@ -4,10 +4,12 @@ param(
     [string]$ArtifactDirectory = ".data\production-artifacts",
     [string]$DatabaseUser = "postgres",
     [string]$DatabaseName = "agentic_data",
+    [string]$ManifestKey = $env:BACKUP_MANIFEST_KEY,
     [switch]$ConfirmRestore
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "backup-common.ps1")
 if (-not $ConfirmRestore) {
     throw "Pass -ConfirmRestore to acknowledge that database objects will be replaced."
 }
@@ -17,8 +19,22 @@ if ($writers) {
     throw "Stop the app and worker services before restoring a coordinated backup."
 }
 
-$manifestPath = Join-Path $BackupDirectory "manifest.json"
-$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+$manifestKeyBytes = Get-BackupManifestKey $ManifestKey
+$manifest = Read-VerifiedBackupManifest `
+    -Directory $BackupDirectory `
+    -Key $manifestKeyBytes
+if ($manifest.schemaVersion -ne 1) {
+    throw "Unsupported backup manifest version."
+}
+if (-not $manifest.migrations) {
+    throw "Backup manifest does not contain migration metadata."
+}
+Assert-ExactMigrationManifest `
+    -Actual @($manifest.migrations) `
+    -Expected (Get-LocalMigrationManifest (
+        Join-Path $PSScriptRoot "..\migrations\postgres"
+    ))
+Assert-BackupLeafName $manifest.database.file
 $databasePath = Join-Path $BackupDirectory $manifest.database.file
 $databaseHash = (Get-FileHash -LiteralPath $databasePath -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($databaseHash -ne $manifest.database.sha256) {
@@ -38,6 +54,7 @@ foreach ($path in @($artifactStage, $artifactRollback)) {
 New-Item -ItemType Directory -Path $artifactStage -Force | Out-Null
 
 if ($manifest.artifacts) {
+    Assert-BackupLeafName $manifest.artifacts.file
     $artifactArchive = Join-Path $BackupDirectory $manifest.artifacts.file
     $artifactHash = (Get-FileHash -LiteralPath $artifactArchive -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($artifactHash -ne $manifest.artifacts.sha256) {
@@ -69,6 +86,7 @@ if ($acquired -notcontains "acquired") {
 
 $containerFile = "/tmp/$($manifest.database.file)"
 $artifactSwapped = $false
+$databaseRestored = $false
 try {
     New-Item -ItemType Directory -Path $artifactParent -Force | Out-Null
     if (Test-Path -LiteralPath $artifactTarget) {
@@ -94,12 +112,27 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "pg_restore failed."
     }
+    $databaseRestored = $true
+    Assert-ExactMigrationManifest `
+        -Actual (Get-DatabaseMigrationManifest `
+            -Container $container `
+            -DatabaseUser $DatabaseUser `
+            -DatabaseName $DatabaseName) `
+        -Expected @($manifest.migrations)
 } catch {
-    if ($artifactSwapped -and (Test-Path -LiteralPath $artifactTarget)) {
-        Remove-Item -LiteralPath $artifactTarget -Recurse -Force
-    }
-    if (Test-Path -LiteralPath $artifactRollback) {
-        Move-Item -LiteralPath $artifactRollback -Destination $artifactTarget
+    if (-not $databaseRestored) {
+        if ($artifactSwapped -and (Test-Path -LiteralPath $artifactTarget)) {
+            Remove-Item -LiteralPath $artifactTarget -Recurse -Force
+        }
+        if (Test-Path -LiteralPath $artifactRollback) {
+            Move-Item -LiteralPath $artifactRollback -Destination $artifactTarget
+        }
+    } elseif (Test-Path -LiteralPath $artifactRollback) {
+        Write-Warning (
+            "Database restore committed before verification failed. " +
+            "Restored artifacts remain active; prior artifacts are retained at " +
+            $artifactRollback
+        )
     }
     throw
 } finally {

@@ -16,6 +16,11 @@ jobs:
   package:
     name: Validate release package
     runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: release-administrator-password
+      APP_DATABASE_PASSWORD: release-application-password
+      PRODUCTION_TEST_DATABASE_URL: postgresql://agentic_app:release-application-password@127.0.0.1:54329/agentic_data
+      PRODUCTION_TEST_MIGRATION_DATABASE_URL: postgresql://postgres:release-administrator-password@127.0.0.1:54329/agentic_data
     permissions:
       contents: read
     steps:
@@ -26,6 +31,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       - name: Use supported npm
         run: npm install --global npm@12.0.2
       - run: npm ci
@@ -34,19 +41,55 @@ jobs:
           git fetch origin main:refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
           node scripts/validate-release-tag.mjs "$GITHUB_REF_NAME"
+      - run: docker compose up -d postgres
+      - run: docker compose run --rm bootstrap
+      - run: npm run build
+      - name: Apply migrations
+        env:
+          DATABASE_URL: postgresql://postgres:release-administrator-password@127.0.0.1:54329/agentic_data
+          DATABASE_SSL: disable
+        run: node dist/production/cli.js migrate
       - run: npm run release:check
+      - run: npm run deployment:check
+      - name: Verify SRE evidence
+        env:
+          BENCHMARK_REPETITIONS: 3
+        run: npm run benchmark:sre:verify
+      - name: Run backup and restore drill
+        shell: pwsh
+        run: ./scripts/test-backup-restore.ps1
+      - name: Smoke supported container architectures
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --load \
+            --tag agentic-data-kernel:release-amd64 \
+            .
+          docker run --rm agentic-data-kernel:release-amd64 \
+            node dist/production/cli.js --help
+          docker buildx build \
+            --platform linux/arm64 \
+            --load \
+            --tag agentic-data-kernel:release-arm64 \
+            .
+          docker run --rm agentic-data-kernel:release-arm64 \
+            node dist/production/cli.js --help
       - name: Create npm artifact
         run: |
           mkdir release-artifacts
           npm pack --json --pack-destination release-artifacts
+          npm sbom --sbom-format spdx > release-artifacts/npm-sbom.spdx.json
           cd release-artifacts
-          sha256sum *.tgz > SHA256SUMS
+          sha256sum *.tgz *.json > SHA256SUMS
       - uses: actions/upload-artifact@v7
         with:
           name: npm-package
           path: release-artifacts
           if-no-files-found: error
           retention-days: 14
+      - name: Stop containers
+        if: always()
+        run: docker compose down -v
 
   npm:
     name: Publish npm package
@@ -69,8 +112,6 @@ jobs:
           name: npm-package
           path: release-artifacts
       - name: Publish package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
           if npm view "agentic-data-kernel@$VERSION" version --json >/dev/null 2>&1; then
@@ -114,6 +155,8 @@ jobs:
           flavor: latest=auto
           tags: |
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
             type=raw,value=next,enable=${{ contains(github.ref_name, '-') }}
           labels: |
             org.opencontainers.image.title=Agentic Data Kernel
@@ -130,6 +173,8 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max
       - name: Attest image provenance
         uses: actions/attest@v4
         with:
@@ -158,6 +203,7 @@ jobs:
           RELEASE_ARGS=(
             release create "$GITHUB_REF_NAME"
             release-artifacts/*.tgz
+            release-artifacts/*.json
             release-artifacts/SHA256SUMS
             --repo "$GITHUB_REPOSITORY"
             --verify-tag

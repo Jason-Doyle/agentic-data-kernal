@@ -29,7 +29,7 @@ function execute(
   operation: AgentOperation,
 ): IntentExecutionResult {
   return executeIntent(kernel, {
-    protocolVersion: "0.1",
+    protocolVersion: "1.0",
     requestId: `library-${idempotencyKey}`,
     idempotencyKey,
     principal,

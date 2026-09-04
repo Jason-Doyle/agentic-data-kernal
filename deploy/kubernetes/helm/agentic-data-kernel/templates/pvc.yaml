@@ -5,10 +5,11 @@ metadata:
   name: {{ include "agentic-data-kernel.pvcName" . }}
   labels:
     {{- include "agentic-data-kernel.labels" . | nindent 4 }}
-  {{- with .Values.persistence.annotations }}
   annotations:
+    helm.sh/resource-policy: keep
+    {{- with .Values.persistence.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
 spec:
   accessModes:
     {{- toYaml .Values.persistence.accessModes | nindent 4 }}

@@ -1,5 +1,5 @@
 {
-  "protocolVersion": "0.1",
+  "protocolVersion": "1.0",
   "requestId": "example-assert-weight",
   "idempotencyKey": "example-assert-weight",
   "principal": {

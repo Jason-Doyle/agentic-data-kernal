@@ -2,10 +2,13 @@ param(
     [string]$Destination = ".backups",
     [string]$ArtifactDirectory = ".data\production-artifacts",
     [string]$DatabaseUser = "postgres",
-    [string]$DatabaseName = "agentic_data"
+    [string]$DatabaseName = "agentic_data",
+    [string]$ManifestKey = $env:BACKUP_MANIFEST_KEY
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "backup-common.ps1")
+$manifestKeyBytes = Get-BackupManifestKey $ManifestKey
 $writers = docker compose ps -q app worker
 if ($writers) {
     throw "Stop the app and worker services before creating a coordinated backup."
@@ -48,6 +51,15 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "docker cp failed."
     }
+    $migrations = Get-DatabaseMigrationManifest `
+        -Container $container `
+        -DatabaseUser $DatabaseUser `
+        -DatabaseName $DatabaseName
+    Assert-ExactMigrationManifest `
+        -Actual $migrations `
+        -Expected (Get-LocalMigrationManifest (
+            Join-Path $PSScriptRoot "..\migrations\postgres"
+        ))
 
     $artifactArchive = $null
     if (
@@ -62,11 +74,13 @@ try {
     }
 
     $manifest = [ordered]@{
+        schemaVersion = 1
         createdAt = (Get-Date).ToUniversalTime().ToString("o")
         database = @{
             file = $databaseFile
             sha256 = (Get-FileHash -LiteralPath $localDatabaseFile -Algorithm SHA256).Hash.ToLowerInvariant()
         }
+        migrations = $migrations
         artifacts = if ($artifactArchive) {
             @{
                 file = Split-Path $artifactArchive -Leaf
@@ -77,8 +91,10 @@ try {
         }
     }
 
-    $manifest | ConvertTo-Json -Depth 5 |
-        Set-Content -LiteralPath (Join-Path $backupDirectory "manifest.json") -Encoding utf8
+    Write-SignedBackupManifest `
+        -Manifest $manifest `
+        -Directory $backupDirectory `
+        -Key $manifestKeyBytes
 
     Write-Output $backupDirectory
 } finally {

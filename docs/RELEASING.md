@@ -8,8 +8,9 @@ Releases publish the same source revision through three channels:
 
 The release workflow builds multi-architecture container images for
 `linux/amd64` and `linux/arm64`. npm packages published from the workflow carry
-registry provenance, and container images receive a GitHub artifact
-attestation.
+registry provenance. Container images include an SBOM and maximal provenance
+and receive a GitHub artifact attestation. The GitHub release contains the npm
+tarball, an SPDX npm SBOM, and SHA-256 checksums.
 
 Release workflows are serialized. A tag is rejected when a newer tag already
 exists in the same stable or prerelease channel, which prevents an older
@@ -27,31 +28,29 @@ Prerelease versions receive:
 - a GitHub prerelease.
 
 Stable versions receive the npm and container `latest` tags.
+They also receive container tags for the full version, major/minor version, and
+major version.
 
 Consumers should pin exact versions in production even when a moving tag is
 available.
 
-## First npm publication
+## npm trusted publishing
 
-npm requires the package to exist before its trusted publisher can be
-configured. Bootstrap the first release with a short-lived granular npm token:
+The repository uses npm trusted publishing through GitHub OIDC. The release
+workflow must not receive `NODE_AUTH_TOKEN` or a long-lived npm token.
 
-1. Create a granular token that can publish public packages and satisfies the
-   account's two-factor authentication policy.
-2. Store it as the `NPM_TOKEN` GitHub Actions repository secret.
-3. Push the first version tag and wait for the Release workflow to finish.
-4. In the npm settings for `agentic-data-kernel`, configure a GitHub Actions
-   trusted publisher with:
+Verify the npm package settings before a stable release:
+
+1. Configure a GitHub Actions trusted publisher with:
    - owner: `Jason-Doyle`;
    - repository: `agentic-data-kernel`;
    - workflow filename: `release.yml`;
    - environment: none.
-5. Delete the `NPM_TOKEN` repository secret.
-6. Require two-factor authentication and disallow token-based publishing in the
+2. Confirm no `NPM_TOKEN` repository secret is present.
+3. Require two-factor authentication and disallow token-based publishing in the
    npm package settings.
 
-Later releases use GitHub OIDC and do not require an npm token. The workflow
-uses npm 12 because trusted publishing requires a recent npm CLI.
+The workflow uses npm 12 because trusted publishing requires a recent npm CLI.
 
 ## First container publication
 
@@ -79,12 +78,19 @@ workflow.
    - `CHANGELOG.md`;
    - the release version in `README.md`;
    - `AGENTIC_DATA_IMAGE` in `.env.example`.
+   - `src/version.ts`;
+   - Helm `appVersion` and deployment example image tags.
 3. Run:
 
    ```powershell
    npm run release:check
+   npm run deployment:check
+   npm run benchmark:sre:verify
+   .\scripts\test-backup-restore.ps1
    docker compose --env-file .env.example config --quiet
    docker build --tag agentic-data-kernel:release-check .
+   docker run --rm agentic-data-kernel:release-check `
+     node dist/production/cli.js --help
    ```
 
 4. Merge the release pull request to `main`.
@@ -99,17 +105,38 @@ workflow.
    ```
 
 The tag starts `.github/workflows/release.yml`. The GitHub Release is created
-only after npm and container publication succeed.
+only after all tag-SHA gates, npm publication, and container publication
+succeed. Do not create a beta or release-candidate tag for the 1.0 graduation.
 
 ## Verification
 
-For a prerelease:
+For a stable release:
 
 ```powershell
-npm view agentic-data-kernel@next version
+npm view agentic-data-kernel@latest version
+npm view agentic-data-kernel@1.0.0 dist.attestations
 docker pull ghcr.io/jason-doyle/agentic-data-kernel:<version>
+docker pull ghcr.io/jason-doyle/agentic-data-kernel:1.0
+docker pull ghcr.io/jason-doyle/agentic-data-kernel:1
+docker pull ghcr.io/jason-doyle/agentic-data-kernel:latest
 gh release view v<version> --repo Jason-Doyle/agentic-data-kernel
 ```
 
-Confirm the npm provenance statement, container attestation, release checksums,
-and exact source revision before announcing the release.
+Confirm:
+
+- npm `latest` resolves to the exact version and its provenance references the
+  release workflow and tag commit;
+- all four container tags resolve to the same multi-architecture digest;
+- the image supports `linux/amd64` and `linux/arm64`;
+- the container SBOM and GitHub attestation are present;
+- the release tarball and SPDX SBOM match `SHA256SUMS`;
+- the GitHub release targets the exact signed or annotated tag.
+
+After `1.0.0` is verified, deprecate every npm version below 1.0.0:
+
+```powershell
+npm deprecate "agentic-data-kernel@<1.0.0" `
+  "Unsupported prerelease. Upgrade to agentic-data-kernel@^1.0.0."
+```
+
+Confirm the deprecation notice is visible on an older published version.

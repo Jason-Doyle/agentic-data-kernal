@@ -63,7 +63,9 @@ Generate local secrets:
 Copy `.env.example` to `.env`, replace every placeholder, and configure an
 OpenAI-compatible embeddings endpoint.
 
-For managed PostgreSQL, set `DATABASE_SSL=require`. If the provider CA is not
+`DATABASE_SSL` is required. Set it to `require` for managed PostgreSQL and to
+`disable` only for local development or an authenticated loopback database
+proxy. If the provider CA is not
 already in the container's trust store, set `DATABASE_CA_CERT_BASE64` to the
 base64 encoding of its PEM CA bundle.
 Do not add SSL query parameters such as `sslmode` to `DATABASE_URL` or
@@ -194,8 +196,9 @@ Then run:
 npm run prod:mcp
 ```
 
-The MCP process authenticates once and does not accept caller-supplied tenant or
-principal identities.
+The MCP process authenticates at startup, binds every tool to that identity,
+and revalidates revocation, expiry, tenant status, scope, and purpose for every
+operation. It does not accept caller-supplied tenant or principal identities.
 
 ## Encrypted artifacts
 
@@ -217,7 +220,7 @@ Artifact files use:
 - tenant-derived keys using HKDF-SHA256;
 - authenticated metadata binding tenant, artifact ID, media type, and content
   hash;
-- atomic temporary-file creation and rename;
+- atomic hard-link publication from a synced temporary file;
 - immutable content-address verification.
 
 Artifact metadata writes are serialized with a database advisory lock. A failed
@@ -321,6 +324,16 @@ They are retried with the same idempotency key up to
 `EFFECT_MAX_ATTEMPTS`. A receiver must return a stable `providerReference` for
 success.
 
+The worker rotates across active tenants between leases. Multiple replicas can
+run concurrently because leases use `SKIP LOCKED`, but PostgreSQL connection
+capacity must include every replica. On shutdown, outbound requests are
+aborted. Ambiguous results remain durable and are reconciled with the original
+effect ID and provider idempotency key.
+
+The worker exposes private liveness, readiness, and metrics endpoints on
+`WORKER_MONITOR_HOST` and `WORKER_MONITOR_PORT`, defaulting to
+`127.0.0.1:4319`.
+
 Public clients cannot submit payment outcomes.
 
 ### Generic effects
@@ -345,6 +358,27 @@ historical effects for duplicate keys within the same tenant and provider
 origin. Resolve any reported collision before retrying the migration; the
 migration rolls back without changing the schema.
 
+### Timers
+
+`process_timers` is intentionally tenant-scoped and is not an autonomous global
+scheduler. Invoke it periodically through an authenticated Agent Intent client
+whose key has `workflows:run` for that tenant. Each call locks and processes at
+most 100 due timers with `SKIP LOCKED`; continue until the returned array is
+empty. Run only one logical scheduler per tenant unless duplicate invocations
+are acceptable.
+
+### Rate limiting and proxies
+
+`RATE_LIMIT_PER_MINUTE` is enforced per API process and API key. A separate
+pre-authentication limiter uses the resolved client address. Set
+`TRUSTED_PROXY_HOPS` to the exact number of trusted proxies that append
+`X-Forwarded-For`, and keep the Node.js listener unreachable except through
+those proxies. Leave it at `0` for direct connections.
+
+Multiple API replicas multiply the built-in allowance. Production
+multi-replica deployments need a shared limiter at the ingress, gateway, or
+edge.
+
 ## Backup and restore
 
 Create a checksum-manifested backup:
@@ -362,7 +396,10 @@ Restore after stopping application and worker processes:
   -ConfirmRestore
 ```
 
-The database and encrypted artifacts are one recovery unit. Backup and restore
+The database and encrypted artifacts are one recovery unit. Backup manifests
+are authenticated with `BACKUP_MANIFEST_KEY`, include the exact database
+migration versions and checksums, and must be copied with their signature.
+Backup and restore
 set a database maintenance flag that every supported writer checks while
 holding a transaction lock. The scripts also refuse running Compose app or
 worker containers.

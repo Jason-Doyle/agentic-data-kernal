@@ -214,7 +214,7 @@ embedded CLI accepts it from a file:
 
 ```json
 {
-  "protocolVersion": "0.1",
+  "protocolVersion": "1.0",
   "requestId": "observe-1001",
   "idempotencyKey": "observe-1001",
   "principal": {
@@ -365,9 +365,10 @@ lineage                verification
  PostgreSQL + pgvector + RLS
 ```
 
-## Current boundaries
+## Stable support and boundaries
 
-- The release is alpha.
+- Version 1.0.0 supports the bounded production profile documented in
+  [Stability and Compatibility](docs/STABILITY.md).
 - Production targets one PostgreSQL primary.
 - The default rate limiter is process-local.
 - One embedding model, version, and dimension is active per deployment.
@@ -392,6 +393,9 @@ See [Benefits and Tradeoffs](docs/TRADEOFFS.md) for a fuller fit assessment.
 - [Use cases](docs/USE_CASES.md)
 - [Integration guide](docs/INTEGRATIONS.md)
 - [Production profile](docs/PRODUCTION.md)
+- [Stability and compatibility](docs/STABILITY.md)
+- [Upgrade and rollback](docs/UPGRADING.md)
+- [Production runbooks](docs/RUNBOOKS.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Release process](docs/RELEASING.md)
 - [Security policy](SECURITY.md)

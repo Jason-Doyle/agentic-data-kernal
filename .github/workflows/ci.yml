@@ -34,6 +34,8 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run test:package
+      - if: matrix.node == 24
+        run: npm run test:backup-manifest
 
   container:
     name: Production container
@@ -77,12 +79,16 @@ jobs:
       - name: Apply migrations
         env:
           DATABASE_URL: postgresql://postgres:ci-administrator-password@127.0.0.1:54329/agentic_data
+          DATABASE_SSL: disable
         run: node dist/production/cli.js migrate
       - run: npm test
       - name: Run SRE comparison and verify published evidence
         env:
           BENCHMARK_REPETITIONS: 3
         run: npm run benchmark:sre:verify
+      - name: Run backup and restore drill
+        shell: pwsh
+        run: ./scripts/test-backup-restore.ps1
       - name: Show container logs
         if: failure()
         run: docker compose logs postgres

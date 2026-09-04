@@ -14,6 +14,7 @@ import {
   rm,
   stat,
 } from "node:fs/promises";
+import { platform } from "node:os";
 import { dirname, join, posix, relative, resolve } from "node:path";
 import type { ArtifactKeyringConfig } from "./config.js";
 
@@ -93,6 +94,7 @@ export class EncryptedArtifactStore {
     try {
       await link(temporary, path);
       await rm(temporary, { force: true });
+      await syncDirectory(dirname(path));
       return { ...descriptor, created: true };
     } catch (error) {
       await rm(temporary, { force: true });
@@ -127,11 +129,14 @@ export class EncryptedArtifactStore {
     const encrypted = await readFile(path);
     const proof = createHash("sha256").update(encrypted).digest("hex");
     await rm(path, { force: true });
+    await syncDirectory(dirname(path));
     return proof;
   }
 
   public async removeIfPresent(storageKey: string): Promise<void> {
-    await rm(this.pathFor(storageKey), { force: true });
+    const path = this.pathFor(storageKey);
+    await rm(path, { force: true });
+    await syncDirectory(dirname(path));
   }
 
   public async listStoredFiles(): Promise<
@@ -169,6 +174,18 @@ export class EncryptedArtifactStore {
       throw new Error("Artifact storage path escaped its root");
     }
     return path;
+  }
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  if (platform() === "win32") {
+    return;
+  }
+  const handle = await open(directory, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 

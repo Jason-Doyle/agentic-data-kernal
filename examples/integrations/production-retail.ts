@@ -83,7 +83,7 @@ async function execute(
       "x-agent-purpose": config.purpose,
     },
     body: JSON.stringify({
-      protocolVersion: "0.1",
+      protocolVersion: "1.0",
       requestId: randomUUID(),
       ...(idempotencyKey ? { idempotencyKey } : {}),
       principal: {

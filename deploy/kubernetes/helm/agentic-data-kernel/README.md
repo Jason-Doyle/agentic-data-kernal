@@ -68,7 +68,9 @@ When enabling ingress, configure at least one `ingress.tls` entry and disable
 plain HTTP through the selected ingress controller. Set
 `ingress.tlsOnlyAnnotation` and `ingress.tlsOnlyValue` to its redirect or
 HTTP-disable annotation, for example
-`nginx.ingress.kubernetes.io/ssl-redirect=true`.
+`nginx.ingress.kubernetes.io/ssl-redirect=true`. Also set
+`config.trustedProxyHops` to the exact number of trusted forwarding hops. The
+chart rejects ingress with a zero hop count.
 
 Create the namespace and both Secrets before Helm runs. Runtime pods cannot
 read the administrative Secret. The bootstrap and migration hooks

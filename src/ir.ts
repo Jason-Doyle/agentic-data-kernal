@@ -7,6 +7,10 @@ import {
 } from "./kernel.js";
 import type { ExecutionReceipt, JsonValue } from "./types.js";
 import { sha256, stableStringify } from "./util.js";
+import {
+  SUPPORTED_AGENT_INTENT_VERSIONS,
+  type AgentIntentVersion,
+} from "./version.js";
 
 const nonEmptyString = z.string().trim().min(1);
 const isoTimestamp = z.iso.datetime({ offset: true });
@@ -320,6 +324,8 @@ export const agentOperationSchema = z.discriminatedUnion("op", [
     .object({
       op: z.literal("list_effects"),
       instanceId: nonEmptyString.optional(),
+      afterEffectId: nonEmptyString.optional(),
+      limit: z.number().int().min(1).max(100).optional(),
     })
     .strict(),
   z
@@ -332,7 +338,7 @@ export const agentOperationSchema = z.discriminatedUnion("op", [
 
 export const intentEnvelopeSchema = z
   .object({
-    protocolVersion: z.literal("0.1"),
+    protocolVersion: z.enum(SUPPORTED_AGENT_INTENT_VERSIONS),
     requestId: nonEmptyString,
     idempotencyKey: nonEmptyString.optional(),
     principal: principalSchema,
@@ -344,7 +350,7 @@ export type AgentOperation = z.infer<typeof agentOperationSchema>;
 export type IntentEnvelope = z.infer<typeof intentEnvelopeSchema>;
 
 export interface IntentExecutionResult {
-  protocolVersion: "0.1";
+  protocolVersion: AgentIntentVersion;
   requestId: string;
   status: "ok";
   operation: AgentOperation["op"];
@@ -373,10 +379,18 @@ export function executeIntent(
     envelope.idempotencyKey ?? envelope.requestId
   }`;
   const requestHash = sha256(
-    stableStringify({
-      principal: envelope.principal,
-      operation: envelope.operation,
-    }),
+    stableStringify(
+      envelope.protocolVersion === "0.1"
+        ? {
+            principal: envelope.principal,
+            operation: envelope.operation,
+          }
+        : {
+            protocolVersion: envelope.protocolVersion,
+            principal: envelope.principal,
+            operation: envelope.operation,
+          },
+    ),
   );
 
   return kernel.transaction(() => {
@@ -386,7 +400,11 @@ export function executeIntent(
       requestHash,
     );
     if (replay) {
-      return { ...replay, idempotentReplay: true };
+      return {
+        ...replay,
+        requestId: envelope.requestId,
+        idempotentReplay: true,
+      };
     }
 
     const rawResult = executeOperation(kernel, envelope);
@@ -400,7 +418,7 @@ export function executeIntent(
       evidence,
     );
     const response: IntentExecutionResult = {
-      protocolVersion: "0.1",
+      protocolVersion: envelope.protocolVersion,
       requestId: envelope.requestId,
       status: "ok",
       operation: envelope.operation.op,
@@ -492,6 +510,10 @@ function executeOperation(
       return kernel.agency.listEffects(
         principal.tenantId,
         operation.instanceId,
+        {
+          afterEffectId: operation.afterEffectId,
+          limit: operation.limit,
+        },
       );
     case "process_timers":
       return kernel.retail.processTimers(principal, operation.asOf);

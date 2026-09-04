@@ -127,23 +127,65 @@ export async function authenticateToken(
     [parsed.keyId],
   );
   const row = result.rows[0];
-  if (!row || !row.tenant_active || row.revoked_at !== null) {
-    throw new AuthenticationError("Invalid or revoked API key");
-  }
-  if (row.expires_at && row.expires_at.getTime() <= Date.now()) {
-    throw new AuthenticationError("API key has expired");
-  }
+  const activeRow = requireActiveApiKey(row);
   const supplied = Buffer.from(
     await deriveTokenHash(token, config.authPepper, parsed.keyId),
     "hex",
   );
-  const expected = Buffer.from(row.token_hash, "hex");
+  const expected = Buffer.from(activeRow.token_hash, "hex");
   if (
     supplied.length !== expected.length ||
     !timingSafeEqual(supplied, expected)
   ) {
     throw new AuthenticationError("Invalid or revoked API key");
   }
+  return principalFromActiveRow(activeRow, purpose);
+}
+
+export async function revalidatePrincipal(
+  client: PoolClient,
+  principal: AuthenticatedPrincipal,
+): Promise<AuthenticatedPrincipal> {
+  const result = await client.query<ApiKeyRow>(
+    `SELECT
+       k.key_id,
+       k.tenant_id,
+       k.principal_id,
+       k.token_hash,
+       k.scopes,
+       k.purposes,
+       k.expires_at,
+       k.revoked_at,
+       t.active AS tenant_active
+     FROM agentic_auth.api_keys k
+     JOIN agentic_auth.tenants t ON t.tenant_id = k.tenant_id
+     WHERE k.key_id = $1
+       AND k.tenant_id = $2
+       AND k.principal_id = $3`,
+    [principal.keyId, principal.tenantId, principal.principalId],
+  );
+  return principalFromActiveRow(
+    requireActiveApiKey(result.rows[0]),
+    principal.purpose,
+  );
+}
+
+function requireActiveApiKey(
+  row: ApiKeyRow | undefined,
+): ApiKeyRow {
+  if (!row || !row.tenant_active || row.revoked_at !== null) {
+    throw new AuthenticationError("Invalid or revoked API key");
+  }
+  if (row.expires_at && row.expires_at.getTime() <= Date.now()) {
+    throw new AuthenticationError("API key has expired");
+  }
+  return row;
+}
+
+function principalFromActiveRow(
+  row: ApiKeyRow,
+  purpose: string,
+): AuthenticatedPrincipal {
   const purposes = new Set(row.purposes);
   if (!purposes.has("*") && !purposes.has(purpose)) {
     throw new AuthorizationError(`Purpose ${purpose} is not allowed`);

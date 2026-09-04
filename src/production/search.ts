@@ -7,6 +7,7 @@ import {
 } from "./embeddings.js";
 
 export interface HybridSearchQueryInput extends EmbeddingSpace {
+  tenantId: string;
   embedding: number[];
   operation: Extract<AgentOperation, { op: "search" }>;
   systemAt: string;
@@ -33,6 +34,7 @@ export function buildHybridSearchQuery(
   }
   const vectorType = `vector(${space.dimensions})`;
   const candidateFilters = `
+           AND assertion.tenant_id = $14
            AND assertion.system_from <= $3
            AND (
              assertion.system_to IS NULL
@@ -80,6 +82,7 @@ export function buildHybridSearchQuery(
            )
            OR edge.object_entity_id = reachable.entity_id
          WHERE reachable.depth < $6
+           AND edge.tenant_id = $14
            AND edge.system_from <= $3
            AND (edge.system_to IS NULL OR edge.system_to > $3)
            AND edge.valid_from <= $4
@@ -169,6 +172,7 @@ export function buildHybridSearchQuery(
       space.version,
       input.candidateLimit,
       input.resultLimit,
+      input.tenantId,
     ],
   };
 }

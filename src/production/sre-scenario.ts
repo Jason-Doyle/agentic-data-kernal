@@ -7,6 +7,7 @@ import type {
 import type {
   JsonValue,
 } from "../types.js";
+import { AGENT_INTENT_VERSION } from "../version.js";
 import {
   authenticateToken,
   createApiKey,
@@ -795,7 +796,7 @@ async function execute(
   operation: AgentOperation,
 ): Promise<IntentExecutionResult> {
   return kernel.execute(principal, {
-    protocolVersion: "0.1",
+    protocolVersion: AGENT_INTENT_VERSION,
     requestId: `${runId}-${step}-${randomUUID()}`,
     idempotencyKey: `${runId}-${step}`,
     principal: {

@@ -19,45 +19,21 @@ services:
       retries: 30
 
   bootstrap:
-    image: pgvector/pgvector:0.8.6-pg18-bookworm
+    image: ${AGENTIC_DATA_IMAGE:-agentic-data-kernel:local}
+    build:
+      context: .
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      MIGRATION_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/agentic_data
       APP_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?APP_DATABASE_PASSWORD is required}
-    entrypoint:
-      - /bin/sh
-      - -ec
+      DATABASE_SSL: ${DATABASE_SSL:-disable}
+      DATABASE_CA_CERT_BASE64: ${DATABASE_CA_CERT_BASE64:-}
     command:
-      - |
-        export PGPASSWORD="$$POSTGRES_PASSWORD"
-        if ! psql \
-          --host postgres \
-          --username postgres \
-          --dbname agentic_data \
-          --tuples-only \
-          --no-align \
-          --command "SELECT 1 FROM pg_roles WHERE rolname = 'agentic_app'" |
-          grep -q 1; then
-          printf '%s\n' \
-            "CREATE ROLE agentic_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD :'app_password';" |
-          psql \
-            --host postgres \
-            --username postgres \
-            --dbname agentic_data \
-            --set=ON_ERROR_STOP=1 \
-            --set=app_password="$$APP_DATABASE_PASSWORD"
-        else
-          printf '%s\n' \
-            "ALTER ROLE agentic_app PASSWORD :'app_password';" |
-          psql \
-            --host postgres \
-            --username postgres \
-            --dbname agentic_data \
-            --set=ON_ERROR_STOP=1 \
-            --set=app_password="$$APP_DATABASE_PASSWORD"
-        fi
+      - node
+      - dist/production/cli.js
+      - bootstrap-role
 
   migrate:
     profiles:
@@ -122,6 +98,8 @@ services:
       HOST: 0.0.0.0
       PORT: 4318
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
     expose:
       - "4318"
     volumes:
@@ -169,12 +147,26 @@ services:
       HNSW_MAX_SCAN_TUPLES: ${HNSW_MAX_SCAN_TUPLES:-20000}
       EFFECT_ALLOWED_HOSTS: ${EFFECT_ALLOWED_HOSTS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKER_MONITOR_HOST: 0.0.0.0
+      WORKER_MONITOR_PORT: 4319
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
+    expose:
+      - "4319"
     volumes:
       - ${ARTIFACT_DIR_HOST:-./.data/production-artifacts}:/var/lib/agentic-data/artifacts
     command:
       - node
       - dist/production/cli.js
       - worker
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:4319/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 5s
+      timeout: 3s
+      retries: 30
 
   proxy:
     profiles:

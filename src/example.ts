@@ -6,6 +6,7 @@ import {
 } from "./ir.js";
 import type { JsonValue, PrincipalContext } from "./types.js";
 import { toJsonValue } from "./util.js";
+import { AGENT_INTENT_VERSION } from "./version.js";
 
 const principal: PrincipalContext = {
   tenantId: "example-retail",
@@ -19,7 +20,7 @@ export function runExample(kernel: AgenticKernel): JsonValue {
     operation: AgentOperation,
   ): IntentExecutionResult =>
     executeIntent(kernel, {
-      protocolVersion: "0.1",
+      protocolVersion: AGENT_INTENT_VERSION,
       requestId: `example-${key}`,
       idempotencyKey: key,
       principal,

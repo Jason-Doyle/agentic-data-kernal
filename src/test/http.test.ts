@@ -15,7 +15,7 @@ test("HTTP endpoint executes typed intents", async () => {
   const catalogResponse = await fetch(`${base}/v1/catalog`);
   assert.equal(catalogResponse.status, 200);
   const catalog = (await catalogResponse.json()) as { protocolVersion: string };
-  assert.equal(catalog.protocolVersion, "0.1");
+  assert.equal(catalog.protocolVersion, "1.0");
 
   const executeResponse = await fetch(`${base}/v1/execute`, {
     method: "POST",

@@ -13,7 +13,11 @@ locals {
     { name = "EFFECT_ALLOWED_HOSTS", value = var.effect_allowed_hosts },
     { name = "HOST", value = "0.0.0.0" },
     { name = "PORT", value = "4318" },
-    { name = "LOG_LEVEL", value = "info" }
+    { name = "LOG_LEVEL", value = "info" },
+    { name = "TRUSTED_PROXY_HOPS", value = "1" },
+    { name = "WORKER_MONITOR_HOST", value = "0.0.0.0" },
+    { name = "WORKER_MONITOR_PORT", value = "4319" },
+    { name = "SHUTDOWN_TIMEOUT_MS", value = "10000" }
   ]
   runtime_secrets = [
     { name = "DATABASE_URL", valueFrom = var.secret_arns.database_url },
@@ -179,6 +183,25 @@ resource "aws_ecs_task_definition" "worker" {
           readOnly      = false
         }
       ]
+      portMappings = [
+        {
+          name          = "monitor"
+          containerPort = 4319
+          hostPort      = 4319
+          protocol      = "tcp"
+          appProtocol   = "http"
+        }
+      ]
+      healthCheck = {
+        command = [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:4319/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+        ]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 30
+      }
       logConfiguration = {
         logDriver = "awslogs"
         options = {

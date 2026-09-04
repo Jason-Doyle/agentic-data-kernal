@@ -1,5 +1,5 @@
 {
-  "protocolVersion": "0.1",
+  "protocolVersion": "1.0",
   "requestId": "payment-order-1001",
   "idempotencyKey": "payment-order-1001",
   "principal": {
