@@ -115,10 +115,10 @@ For a stable release:
 
 ```powershell
 npm view agentic-data-kernel@latest version
-npm view agentic-data-kernel@1.0.0 dist.attestations
+npm view agentic-data-kernel@<version> dist.attestations
 docker pull ghcr.io/jason-doyle/agentic-data-kernel:<version>
-docker pull ghcr.io/jason-doyle/agentic-data-kernel:1.0
-docker pull ghcr.io/jason-doyle/agentic-data-kernel:1
+docker pull ghcr.io/jason-doyle/agentic-data-kernel:<major>.<minor>
+docker pull ghcr.io/jason-doyle/agentic-data-kernel:<major>
 docker pull ghcr.io/jason-doyle/agentic-data-kernel:latest
 gh release view v<version> --repo Jason-Doyle/agentic-data-kernel
 ```

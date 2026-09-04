@@ -288,11 +288,11 @@ matter more than durable agency semantics.
 
 ## Install and run
 
-The current stable release is `1.0.0`. Pin an exact version in production.
+The current stable release is `1.1.0`. Pin an exact version in production.
 
 ```powershell
-npm install agentic-data-kernel@1.0.0
-npx --yes agentic-data-kernel@1.0.0 example --db .data\example.db
+npm install agentic-data-kernel@1.1.0
+npx --yes agentic-data-kernel@1.1.0 example --db .data\example.db
 ```
 
 Package entry points and commands:
@@ -335,7 +335,7 @@ Replace every placeholder in `.env` with the generated values, database
 passwords, and embedding-provider configuration before continuing:
 
 ```powershell
-$env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:1.0.0"
+$env:AGENTIC_DATA_IMAGE = "ghcr.io/jason-doyle/agentic-data-kernel:1.1.0"
 docker compose --profile server pull
 docker compose --profile server up --no-build
 ```
@@ -390,7 +390,7 @@ lineage                verification
 
 ## Stable support and boundaries
 
-- Version 1.0.0 supports the bounded production profile documented in
+- Version 1.x supports the bounded production profile documented in
   [Stability and Compatibility](docs/STABILITY.md).
 - Production targets one PostgreSQL primary.
 - The default rate limiter is process-local.
