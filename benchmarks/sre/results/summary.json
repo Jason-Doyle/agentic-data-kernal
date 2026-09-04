@@ -4,8 +4,8 @@
   "environment": {
     "node": "v22.22.2",
     "postgres": "18.6 (Debian 18.6-1.pgdg12+2)",
-    "commit": "07bf161eb2b94343f5301ab1e8a9bcf09f6a69e8",
-    "sourceHash": "fc2462d4bd7a75f73b71eb2cf3551e9164af5c87591131a89c5a4e9b1b94976b"
+    "commit": "dd9b422a18c0c5d64dc358c73a8bebaf2605d2d7",
+    "sourceHash": "d9a990f81466c513ec346e0f9b75de922cc3b08ee62fb7d87c9acc40cbe037e4"
   },
   "runs": [
     {
@@ -31,7 +31,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 67.00579999999997
+        "durationMs": 56.28770000000003
       },
       "operatedTables": 8,
       "databaseBytes": 540672
@@ -59,7 +59,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 982.1896
+        "durationMs": 983.6014
       },
       "operatedTables": 18,
       "databaseBytes": 1572864
@@ -87,7 +87,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 49.897199999999884
+        "durationMs": 50.64720000000011
       },
       "operatedTables": 8,
       "databaseBytes": 540672
@@ -115,7 +115,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 894.9191999999998
+        "durationMs": 880.0989
       },
       "operatedTables": 18,
       "databaseBytes": 1572864
@@ -143,7 +143,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 52.52059999999983
+        "durationMs": 49.38270000000011
       },
       "operatedTables": 8,
       "databaseBytes": 540672
@@ -171,7 +171,7 @@
           "provider reconciliation": true,
           "verification and terminal state": true
         },
-        "durationMs": 855.6321999999996
+        "durationMs": 911.1373000000003
       },
       "operatedTables": 18,
       "databaseBytes": 1572864
@@ -266,7 +266,7 @@
       "authoredTables": 0,
       "operatedTables": 18,
       "scenarioSourceLines": 930,
-      "dependencySourceLines": 14962
+      "dependencySourceLines": 14973
     }
   },
   "benchmarkHarness": {
@@ -277,8 +277,8 @@
     "agenticDataKernelMedian": 1572864
   },
   "runtimeMillisecondsInformational": {
-    "conventionalPostgresMedian": 52.52059999999983,
-    "agenticDataKernelMedian": 894.9191999999998
+    "conventionalPostgresMedian": 50.64720000000011,
+    "agenticDataKernelMedian": 911.1373000000003
   },
   "explanationQuestions": 9,
   "claims": {

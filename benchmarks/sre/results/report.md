@@ -2,9 +2,9 @@
 
 Generated from `summary.json`.
 
-Source revision: `07bf161eb2b94343f5301ab1e8a9bcf09f6a69e8`
+Source revision: `dd9b422a18c0c5d64dc358c73a8bebaf2605d2d7`
 
-Source hash: `fc2462d4bd7a75f73b71eb2cf3551e9164af5c87591131a89c5a4e9b1b94976b`
+Source hash: `d9a990f81466c513ec346e0f9b75de922cc3b08ee62fb7d87c9acc40cbe037e4`
 
 ## Correctness
 
@@ -24,7 +24,7 @@ Both variants must resolve every run with one delivery and one reconciliation.
 
 The adapter delegates to the shipped SRE scenario, which contains
 930 nonblank TypeScript source lines inside the
-dependency. The full kernel dependency contains 14962
+dependency. The full kernel dependency contains 14973
 nonblank TypeScript source lines.
 
 The benchmark runner and engine-specific audit verification contain
@@ -44,8 +44,8 @@ operated, or upgraded.
 
 | Variant | Median milliseconds |
 | --- | ---: |
-| Conventional PostgreSQL | 52.52 |
-| Agentic Data Kernel | 894.92 |
+| Conventional PostgreSQL | 50.65 |
+| Agentic Data Kernel | 911.14 |
 
 Runtime is not a headline metric. The variants perform different work and this
 deterministic smoke benchmark is not a latency study.
