@@ -23,6 +23,7 @@ jobs:
       PRODUCTION_TEST_MIGRATION_DATABASE_URL: postgresql://postgres:release-administrator-password@127.0.0.1:54329/agentic_data
     permissions:
       contents: read
+      security-events: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,9 +37,14 @@ jobs:
       - name: Use supported npm
         run: npm install --global npm@12.0.2
       - run: npm ci --no-audit --no-fund
-      - name: Audit runtime dependencies
-        timeout-minutes: 5
-        run: npm audit --omit=dev --audit-level=moderate
+      - name: Reject open dependency alerts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OPEN_ALERTS=$(gh api \
+            "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=1" \
+            --jq 'length')
+          test "$OPEN_ALERTS" -eq 0
       - name: Validate release tag
         run: |
           git fetch origin main:refs/remotes/origin/main

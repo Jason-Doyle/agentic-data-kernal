@@ -30,10 +30,6 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - if: matrix.node == 24
-        name: Audit runtime dependencies
-        timeout-minutes: 5
-        run: npm audit --omit=dev --audit-level=moderate
       - run: npm run check
       - run: npm run build
       - run: npm test
